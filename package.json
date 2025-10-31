@@ -1,0 +1,54 @@
+{
+  "name": "noteminder",
+  "version": "1.0.0",
+  "description": "NoteMinder - A portable, clutter-free note-taking application with reminders and image support",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder",
+    "build-mac": "electron-builder --mac",
+    "dev": "electron . --dev"
+  },
+  "keywords": ["notes", "electron", "cross-platform"],
+  "author": "Your Name",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^27.0.0",
+    "electron-builder": "^24.6.4"
+  },
+  "build": {
+    "appId": "com.yourname.noteminder",
+    "productName": "NoteMinder",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "**/*",
+      "build/icon.icns",
+      "build/icon.png",
+      "build/icon16x16.png",
+      "build/icon128x128.png",
+      "build/entitlements.mac.plist"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": "dmg",
+      "icon": "build/icon.icns",
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "extendInfo": {
+        "LSUIElement": true
+      }
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.png"
+    },
+    "linux": {
+      "target": "AppImage",
+      "icon": "build/icon.png"
+    }
+  }
+}
