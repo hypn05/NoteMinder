@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NoteMinder</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Collapsible Arrow Tab -->
+  <div id="arrow-tab" class="arrow-tab">
+    <div class="arrow">◀</div>
+  </div>
+
+  <!-- Main App Container -->
+  <div id="app-container" class="app-container collapsed">
+    <!-- Resize Handle -->
+    <div class="resize-handle"></div>
+    
+    <!-- Header -->
+    <div class="header">
+      <h1>📝 Notes</h1>
+      <div class="header-buttons">
+        <button id="add-note-btn" class="btn-icon" title="Add Note">+</button>
+      </div>
+    </div>
+
+    <!-- Search Bar -->
+    <div class="search-container" id="search-container">
+      <input type="text" id="search-input" class="search-input" placeholder="🔍 Search notes...">
+    </div>
+
+    <!-- Notes List -->
+    <div id="notes-container" class="notes-container">
+      <!-- Notes will be dynamically added here -->
+    </div>
+
+    <!-- Reminder Modal -->
+    <div id="reminder-modal" class="modal hidden">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Set Reminder</h2>
+          <button id="close-reminder-btn" class="btn-icon">×</button>
+        </div>
+        
+        <div style="padding: 20px;">
+          <div style="margin-bottom: 20px;">
+            <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #2c3e50;">Reminder Type:</label>
+            <select id="reminder-type" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 14px;">
+              <option value="once">One-time reminder</option>
+              <option value="daily">Daily reminder</option>
+              <option value="weekly">Weekly reminder</option>
+            </select>
+          </div>
+          
+          <div style="margin-bottom: 20px;">
+            <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #2c3e50;">Date:</label>
+            <input type="date" id="reminder-date" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 14px;">
+          </div>
+          
+          <div style="margin-bottom: 20px;">
+            <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #2c3e50;">Time:</label>
+            <input type="time" id="reminder-time" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 14px;">
+          </div>
+          
+          <div id="weekly-day-selector" style="margin-bottom: 20px; display: none;">
+            <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #2c3e50;">Day of Week:</label>
+            <select id="reminder-day" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 14px;">
+              <option value="0">Sunday</option>
+              <option value="1">Monday</option>
+              <option value="2">Tuesday</option>
+              <option value="3">Wednesday</option>
+              <option value="4">Thursday</option>
+              <option value="5">Friday</option>
+              <option value="6">Saturday</option>
+            </select>
+          </div>
+          
+          <div style="margin-bottom: 20px;">
+            <label style="display: block; margin-bottom: 8px; font-weight: 600; color: #2c3e50;">Message (optional):</label>
+            <input type="text" id="reminder-message" placeholder="e.g., Review this note" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 14px;">
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button id="save-reminder-btn" class="btn-primary">Set Reminder</button>
+          <button id="cancel-reminder-btn" class="btn-secondary">Cancel</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Note Editor Modal -->
+    <div id="note-editor" class="modal hidden">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2 id="editor-title">New Note</h2>
+          <button id="close-editor-btn" class="btn-icon">×</button>
+        </div>
+        
+        <div class="editor-toolbar">
+          <!-- Primary formatting buttons -->
+          <div class="toolbar-group">
+            <button id="bold-btn" class="format-btn" title="Bold (⌘+B)"><strong>B</strong></button>
+            <button id="italic-btn" class="format-btn" title="Italic (⌘+I)"><em>I</em></button>
+            <button id="underline-btn" class="format-btn" title="Underline (⌘+U)"><u>U</u></button>
+          </div>
+          
+          <div class="toolbar-separator"></div>
+          
+          <!-- Heading dropdown -->
+          <div class="toolbar-group">
+            <div class="dropdown">
+              <button class="format-btn dropdown-btn" title="Headings">H ▾</button>
+              <div class="dropdown-content">
+                <button id="h1-btn" class="dropdown-item">Heading 1</button>
+                <button id="h2-btn" class="dropdown-item">Heading 2</button>
+                <button id="h3-btn" class="dropdown-item">Heading 3</button>
+              </div>
+            </div>
+          </div>
+          
+          <div class="toolbar-separator"></div>
+          
+          <!-- Insert dropdown -->
+          <div class="toolbar-group">
+            <div class="dropdown">
+              <button class="format-btn dropdown-btn" title="Insert">+ ▾</button>
+              <div class="dropdown-content">
+                <button id="link-btn" class="dropdown-item">🔗 Link</button>
+                <button id="add-image-btn" class="dropdown-item">📷 Image</button>
+                <button id="code-btn" class="dropdown-item"><> Code</button>
+                <button id="quote-btn" class="dropdown-item">❝ Quote</button>
+                <button id="ul-btn" class="dropdown-item">• Bullet List</button>
+                <button id="ol-btn" class="dropdown-item">1. Numbered List</button>
+                <button id="task-btn" class="dropdown-item">☑ Task List</button>
+              </div>
+            </div>
+          </div>
+          
+          <div class="toolbar-separator"></div>
+          
+          <!-- Tools -->
+          <div class="toolbar-group">
+            <input type="color" id="bg-color-picker" value="#ffffff" title="Background Color">
+            <button id="import-md-btn" class="format-btn" title="Import Markdown">MD</button>
+            <button id="reminder-btn" class="format-btn" title="Set Reminder">⏰</button>
+            <input type="file" id="image-input" accept="image/*" style="display: none;">
+            <input type="file" id="markdown-input" accept=".md,.markdown" style="display: none;">
+          </div>
+        </div>
+
+        <div id="note-content" class="note-content" contenteditable="true" data-placeholder="Start typing your note...">
+        </div>
+
+        <div class="modal-footer">
+          <button id="save-note-btn" class="btn-primary">Save Note</button>
+          <button id="cancel-note-btn" class="btn-secondary">Cancel</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>
