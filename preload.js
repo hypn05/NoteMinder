@@ -19,5 +19,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getTheme: () => ipcRenderer.invoke('get-theme'),
   onThemeChanged: (callback) => ipcRenderer.on('theme-changed', (event, theme) => callback(theme)),
   getStayInView: () => ipcRenderer.invoke('get-stay-in-view'),
-  onStayInViewChanged: (callback) => ipcRenderer.on('stay-in-view-changed', (event, stayInView) => callback(stayInView))
+  onStayInViewChanged: (callback) => ipcRenderer.on('stay-in-view-changed', (event, stayInView) => callback(stayInView)),
+  loaderComplete: () => ipcRenderer.invoke('loader-complete')
 });

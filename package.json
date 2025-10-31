@@ -38,8 +38,11 @@
       "entitlementsInherit": "build/entitlements.mac.plist",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
+      "type": "distribution",
       "extendInfo": {
-        "LSUIElement": true
+        "LSUIElement": "1",
+        "LSBackgroundOnly": "0",
+        "NSSupportsAutomaticGraphicsSwitching": true
       }
     },
     "win": {
