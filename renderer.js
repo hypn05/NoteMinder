@@ -55,6 +55,9 @@ const resizeHandle = document.querySelector('.resize-handle');
 
 // Initialize app
 async function init() {
+  // Hide the loading screen after initialization
+  const loadingScreen = document.getElementById('loading-screen');
+  
   notes = await window.electronAPI.loadNotes();
   renderNotes();
   setupEventListeners();
@@ -112,6 +115,14 @@ async function init() {
   
   // Add blur event listener to collapse sidebar when clicking outside
   window.addEventListener('blur', handleWindowBlur);
+  
+  // Hide loading screen - remove it completely after a brief delay
+  setTimeout(() => {
+    if (loadingScreen && loadingScreen.parentNode) {
+      // Remove from DOM after showing the loader for a moment
+      loadingScreen.parentNode.removeChild(loadingScreen);
+    }
+  }, 1000);
 }
 
 // Load theme from settings
@@ -276,10 +287,15 @@ async function toggleSidebar() {
   arrowTab.classList.toggle('expanded');
   document.body.classList.toggle('expanded');
   
-  // Make window click-through when collapsed, but keep arrow tab interactive
+  // Resize window based on expanded state
+  const screenHeight = window.innerHeight;
   if (!isExpanded) {
+    // Collapsed: only show arrow tab (30px width)
+    await window.electronAPI.resizeWindow(30, screenHeight);
     setupMouseTracking();
   } else {
+    // Expanded: show full app (400px width)
+    await window.electronAPI.resizeWindow(400, screenHeight);
     removeMouseTracking();
     await window.electronAPI.setIgnoreMouseEvents(false);
   }

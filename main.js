@@ -2,10 +2,16 @@ const { app, BrowserWindow, ipcMain, screen, shell, Notification, Tray, Menu, di
 const path = require('path');
 const fs = require('fs');
 
-  // Hide dock icon and remove from app switcher on macOS - MUST be done before creating window
-  if (process.platform === 'darwin') {
-    app.setActivationPolicy('accessory');
-  }
+// CRITICAL: Set activation policy at the very top, before any other operations
+// This must be done before app.whenReady() and before creating any windows
+if (process.platform === 'darwin') {
+  console.log('=== DOCK HIDING SETUP ===');
+  console.log('Platform:', process.platform);
+  console.log('Setting activation policy to: accessory');
+  app.setActivationPolicy('accessory');
+  console.log('Activation policy set successfully');
+  console.log('========================');
+}
 
 let mainWindow;
 let tray = null;
@@ -94,8 +100,35 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-
-    app.setName('NoteMinder');
+  app.setName('NoteMinder');
+  
+  // STEP 2: Explicitly hide dock icon (belt and suspenders approach)
+  if (process.platform === 'darwin') {
+    console.log('=== DOCK VERIFICATION ===');
+    
+    // Explicitly hide the dock icon as a backup
+    if (app.dock) {
+      try {
+        app.dock.hide();
+        console.log('Dock icon explicitly hidden via app.dock.hide()');
+        console.log('Dock is visible:', app.dock.isVisible());
+        
+        // AGGRESSIVE: Set up continuous monitoring to keep dock hidden
+        setInterval(() => {
+          if (app.dock.isVisible()) {
+            app.dock.hide();
+            console.log('Dock re-appeared, hiding again...');
+          }
+        }, 500); // Check every 500ms
+        
+      } catch (error) {
+        console.error('Failed to hide dock icon:', error);
+      }
+    } else {
+      console.log('Dock API not available');
+    }
+    console.log('========================');
+  }
   
   // Setup notifications
   if (Notification.isSupported()) {
@@ -104,7 +137,7 @@ app.whenReady().then(() => {
     console.error('Notifications are NOT supported on this system');
   }
   
-  // Create window AFTER setting activation policy
+  // Create window AFTER setting activation policy and hiding dock
   createWindow();
   
   // Create tray icon after window is ready
@@ -326,6 +359,20 @@ function toggleStayInView() {
   }
 }
 
+// STEP 3: Add verification function for debugging
+function checkDockStatus() {
+  if (process.platform === 'darwin') {
+    console.log('=== DOCK STATUS CHECK ===');
+    if (app.dock) {
+      console.log('Dock API available: Yes');
+      console.log('Dock is visible:', app.dock.isVisible());
+    } else {
+      console.log('Dock API available: No');
+    }
+    console.log('========================');
+  }
+}
+
 function createTray() {
   // Determine the correct icon path for both development and production
   let iconPath;
@@ -366,9 +413,21 @@ function createTray() {
         } else {
           mainWindow.show();
           mainWindow.focus();
+          
+          // Re-hide dock after showing window
+          if (process.platform === 'darwin' && app.dock) {
+            setTimeout(() => {
+              app.dock.hide();
+            }, 100);
+          }
         }
       }
     });
+    
+    // Check dock status after tray is created
+    setTimeout(() => {
+      checkDockStatus();
+    }, 1000);
   } catch (error) {
     console.error('Error creating tray:', error);
   }
@@ -658,5 +717,35 @@ ipcMain.handle('hide-window', () => {
 ipcMain.handle('show-window', () => {
   if (mainWindow) {
     mainWindow.show();
+    mainWindow.focus();
+    
+    // Re-hide dock after showing window
+    if (process.platform === 'darwin' && app.dock) {
+      setTimeout(() => {
+        app.dock.hide();
+      }, 100);
+    }
+  }
+});
+
+ipcMain.handle('loader-complete', () => {
+  if (mainWindow) {
+    console.log('Loader complete - showing window');
+    mainWindow.show();
+    mainWindow.focus();
+    
+    // CRITICAL: Aggressively re-hide dock after showing window
+    if (process.platform === 'darwin' && app.dock) {
+      // Try multiple times with increasing delays to ensure it sticks
+      const hideAttempts = [0, 50, 100, 200, 500];
+      hideAttempts.forEach(delay => {
+        setTimeout(() => {
+          if (app.dock.isVisible()) {
+            app.dock.hide();
+            console.log(`Dock re-hidden after ${delay}ms`);
+          }
+        }, delay);
+      });
+    }
   }
 });
