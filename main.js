@@ -1,270 +1,181 @@
-const { app, BrowserWindow, ipcMain, screen, shell, Notification, Tray, Menu, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, dialog, Notification } = require('electron');
 const path = require('path');
-const fs = require('fs');
+const Storage = require('./utils/storage');
+const ReminderManager = require('./utils/reminder');
 
-// CRITICAL: Set activation policy at the very top, before any other operations
-// This must be done before app.whenReady() and before creating any windows
+// Storage instances
+const notesStorage = new Storage('notes.json');
+const settingsStorage = new Storage('settings.json');
+
+let mainWindow = null;
+let tray = null;
+let reminderManager = null;
+let isCollapsed = true;
+
+// Hide dock icon on macOS before app is ready
 if (process.platform === 'darwin') {
-  console.log('=== DOCK HIDING SETUP ===');
-  console.log('Platform:', process.platform);
-  console.log('Setting activation policy to: accessory');
-  app.setActivationPolicy('accessory');
-  console.log('Activation policy set successfully');
-  console.log('========================');
+  app.dock.hide();
 }
 
-let mainWindow;
-let tray = null;
-const NOTES_FILE = path.join(app.getPath('userData'), 'notes.json');
-const SETTINGS_FILE = path.join(app.getPath('userData'), 'settings.json');
-
 function createWindow() {
-  console.log('=== CREATE WINDOW DEBUG ===');
-  console.log('App is packaged:', app.isPackaged);
-  console.log('__dirname:', __dirname);
-  console.log('process.resourcesPath:', process.resourcesPath);
+  const settings = settingsStorage.read() || { theme: 'dark', stayInView: false };
   
-  const { width, height } = screen.getPrimaryDisplay().workAreaSize;
-  console.log('Screen size:', { width, height });
+  // Get screen dimensions
+  const { screen } = require('electron');
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
   
-  const preloadPath = app.isPackaged 
-    ? path.join(process.resourcesPath, 'app.asar', 'preload.js')
-    : path.join(__dirname, 'preload.js');
-  
-  console.log('Preload path:', preloadPath);
-  console.log('Preload exists:', fs.existsSync(preloadPath));
-  
-  const iconPath = app.isPackaged
-    ? path.join(process.resourcesPath, 'build', 'icon128x128.png')
-    : path.join(__dirname, 'build', 'icon128x128.png');
+  // Calculate 80% of screen height
+  const windowHeight = Math.floor(screenHeight * 0.8);
   
   mainWindow = new BrowserWindow({
-    width: 400,
-    height: height,
-    minWidth: 300,
-    minHeight: 400,
-    maxWidth: 800,
-    x: width - 400,
+    width: 30,
+    height: windowHeight,
+    x: 0,
     y: 0,
     frame: false,
     transparent: true,
     alwaysOnTop: true,
-    resizable: true,
+    resizable: false,
+    minimizable: false,
+    maximizable: false,
     skipTaskbar: true,
-    show: false, // Don't show until ready
-    icon: iconPath,
-    ...(process.platform === 'darwin' ? {
-      titleBarStyle: 'hidden',
-      trafficLightPosition: { x: -100, y: -100 }
-    } : {}),
     webPreferences: {
-      nodeIntegration: false,
-      contextIsolation: true,
-      preload: preloadPath
+      nodeIntegration: true,
+      contextIsolation: false
     }
   });
 
-  console.log('BrowserWindow created');
+  mainWindow.loadFile('index.html');
   
-  mainWindow.loadFile('index.html').then(() => {
-    console.log('index.html loaded successfully');
-  }).catch(err => {
-    console.error('Error loading index.html:', err);
-  });
-  
-  // Keep window on top of all other windows
+  // Position window at right edge of screen, centered vertically
+  mainWindow.setPosition(screenWidth - 30, Math.floor((screenHeight - windowHeight) / 2));
+
+  // Set window properties
   mainWindow.setAlwaysOnTop(true, 'floating');
-  mainWindow.setVisibleOnAllWorkspaces(true);
-  
-  // Show window when ready
-  mainWindow.once('ready-to-show', () => {
-    console.log('Window ready to show');
-    mainWindow.show();
-    mainWindow.focus();
-    console.log('Window shown and focused');
+  if (process.platform === 'darwin') {
+    mainWindow.setVisibleOnAllWorkspaces(true);
+  }
+
+  // Handle window blur
+  mainWindow.on('blur', () => {
+    const settings = settingsStorage.read() || { stayInView: false };
+    if (!settings.stayInView && !isCollapsed) {
+      mainWindow.webContents.send('collapse-sidebar');
+    }
   });
-  
-  // Add error handler
-  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
-    console.error('Failed to load:', errorCode, errorDescription);
+
+  // Continuously monitor and hide dock icon on macOS
+  if (process.platform === 'darwin') {
+    setInterval(() => {
+      if (app.dock.isVisible()) {
+        app.dock.hide();
+      }
+    }, 1000);
+  }
+
+  // Track mouse position for click-through
+  mainWindow.webContents.on('did-finish-load', () => {
+    mainWindow.webContents.send('init-settings', settings);
   });
-  
-  // Log when DOM is ready
-  mainWindow.webContents.on('dom-ready', () => {
-    console.log('DOM ready');
-  });
-  
-  // Log window creation for debugging
-  console.log('Window created at position:', { x: width - 400, y: 0, width: 400, height });
-  console.log('===========================');
 }
 
-app.whenReady().then(() => {
-  app.setName('NoteMinder');
+function createTray() {
+  const iconPath = path.join(__dirname, 'build', 'icon16x16.png');
+  tray = new Tray(iconPath);
   
-  // STEP 2: Explicitly hide dock icon (belt and suspenders approach)
-  if (process.platform === 'darwin') {
-    console.log('=== DOCK VERIFICATION ===');
-    
-    // Explicitly hide the dock icon as a backup
-    if (app.dock) {
-      try {
-        app.dock.hide();
-        console.log('Dock icon explicitly hidden via app.dock.hide()');
-        console.log('Dock is visible:', app.dock.isVisible());
-        
-        // AGGRESSIVE: Set up continuous monitoring to keep dock hidden
-        setInterval(() => {
-          if (app.dock.isVisible()) {
-            app.dock.hide();
-            console.log('Dock re-appeared, hiding again...');
-          }
-        }, 500); // Check every 500ms
-        
-      } catch (error) {
-        console.error('Failed to hide dock icon:', error);
-      }
-    } else {
-      console.log('Dock API not available');
-    }
-    console.log('========================');
-  }
+  updateTrayMenu();
   
-  // Setup notifications
-  if (Notification.isSupported()) {
-    console.log('Notifications are supported on this system');
-  } else {
-    console.error('Notifications are NOT supported on this system');
-  }
-  
-  // Create window AFTER setting activation policy and hiding dock
-  createWindow();
-  
-  // Create tray icon after window is ready
-  createTray();
-
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
+  tray.on('click', () => {
+    if (mainWindow) {
+      mainWindow.show();
+      mainWindow.focus();
     }
   });
-});
+}
 
 function updateTrayMenu() {
-  // Load current settings
-  let currentTheme = 'dark';
-  let stayInView = false;
-  try {
-    if (fs.existsSync(SETTINGS_FILE)) {
-      const settings = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
-      currentTheme = settings.theme || 'dark';
-      stayInView = settings.stayInView || false;
-    }
-  } catch (error) {
-    console.error('Error loading settings:', error);
-  }
+  const settings = settingsStorage.read() || { theme: 'dark', stayInView: false };
   
   const contextMenu = Menu.buildFromTemplate([
     {
       label: 'New Note',
       click: () => {
         if (mainWindow) {
-          mainWindow.show();
-          mainWindow.focus();
-          mainWindow.webContents.send('create-new-note');
+          mainWindow.webContents.send('new-note');
         }
       }
     },
     { type: 'separator' },
     {
-      label: 'Export Notes...',
+      label: 'Export Notes',
       click: async () => {
         const result = await dialog.showSaveDialog(mainWindow, {
           title: 'Export Notes',
-          defaultPath: `NoteMinder-Export-${new Date().toISOString().split('T')[0]}.json`,
-          filters: [
-            { name: 'JSON Files', extensions: ['json'] },
-            { name: 'All Files', extensions: ['*'] }
-          ]
+          defaultPath: `notes-${new Date().toISOString().split('T')[0]}.json`,
+          filters: [{ name: 'JSON', extensions: ['json'] }]
         });
-
-        if (!result.canceled) {
-          try {
-            let notes = [];
-            if (fs.existsSync(NOTES_FILE)) {
-              const data = fs.readFileSync(NOTES_FILE, 'utf8');
-              notes = JSON.parse(data);
-            }
-            fs.writeFileSync(result.filePath, JSON.stringify(notes, null, 2));
-            
-            dialog.showMessageBox(mainWindow, {
-              type: 'info',
-              title: 'Export Successful',
-              message: `Successfully exported ${notes.length} note(s)`,
-              buttons: ['OK']
-            });
-          } catch (error) {
-            dialog.showMessageBox(mainWindow, {
-              type: 'error',
-              title: 'Export Failed',
-              message: `Failed to export notes: ${error.message}`,
-              buttons: ['OK']
+        
+        if (!result.canceled && result.filePath) {
+          const notes = notesStorage.read() || [];
+          const fs = require('fs');
+          fs.writeFileSync(result.filePath, JSON.stringify(notes, null, 2));
+          
+          if (mainWindow) {
+            mainWindow.webContents.send('show-message', {
+              type: 'success',
+              message: 'Notes exported successfully!'
             });
           }
         }
       }
     },
     {
-      label: 'Import Notes...',
+      label: 'Import Notes',
       click: async () => {
         const result = await dialog.showOpenDialog(mainWindow, {
           title: 'Import Notes',
-          filters: [
-            { name: 'JSON Files', extensions: ['json'] },
-            { name: 'All Files', extensions: ['*'] }
-          ],
+          filters: [{ name: 'JSON', extensions: ['json'] }],
           properties: ['openFile']
         });
-
-        if (!result.canceled) {
+        
+        if (!result.canceled && result.filePaths.length > 0) {
           try {
-            const importedData = fs.readFileSync(result.filePaths[0], 'utf8');
-            const importedNotes = JSON.parse(importedData);
-
-            if (!Array.isArray(importedNotes)) {
-              throw new Error('Invalid notes file format');
-            }
-
-            let existingNotes = [];
-            if (fs.existsSync(NOTES_FILE)) {
-              const data = fs.readFileSync(NOTES_FILE, 'utf8');
-              existingNotes = JSON.parse(data);
-            }
-
+            const fs = require('fs');
+            const data = fs.readFileSync(result.filePaths[0], 'utf8');
+            const importedNotes = JSON.parse(data);
+            
+            const existingNotes = notesStorage.read() || [];
             const existingIds = new Set(existingNotes.map(n => n.id));
-            const newNotes = importedNotes.filter(n => !existingIds.has(n.id));
-            const mergedNotes = [...existingNotes, ...newNotes];
-
-            fs.writeFileSync(NOTES_FILE, JSON.stringify(mergedNotes, null, 2));
-
-            // Notify renderer to reload notes
+            
+            let imported = 0;
+            let skipped = 0;
+            
+            importedNotes.forEach(note => {
+              if (!existingIds.has(note.id)) {
+                existingNotes.push(note);
+                imported++;
+              } else {
+                skipped++;
+              }
+            });
+            
+            notesStorage.write(existingNotes);
+            
             if (mainWindow) {
-              mainWindow.webContents.send('notes-imported');
+              mainWindow.webContents.send('reload-notes');
+              mainWindow.webContents.send('show-message', {
+                type: 'success',
+                message: `Import complete: ${imported} imported, ${skipped} skipped, ${importedNotes.length} total`
+              });
             }
-
-            dialog.showMessageBox(mainWindow, {
-              type: 'info',
-              title: 'Import Successful',
-              message: `Imported ${newNotes.length} new note(s)\nSkipped ${importedNotes.length - newNotes.length} duplicate(s)\nTotal notes: ${mergedNotes.length}`,
-              buttons: ['OK']
-            });
           } catch (error) {
-            dialog.showMessageBox(mainWindow, {
-              type: 'error',
-              title: 'Import Failed',
-              message: `Failed to import notes: ${error.message}`,
-              buttons: ['OK']
-            });
+            if (mainWindow) {
+              mainWindow.webContents.send('show-message', {
+                type: 'error',
+                message: 'Failed to import notes: ' + error.message
+              });
+            }
           }
         }
       }
@@ -273,9 +184,11 @@ function updateTrayMenu() {
     {
       label: 'Stay in View',
       type: 'checkbox',
-      checked: stayInView,
-      click: () => {
-        toggleStayInView();
+      checked: settings.stayInView,
+      click: (menuItem) => {
+        settings.stayInView = menuItem.checked;
+        settingsStorage.write(settings);
+        updateTrayMenu();
       }
     },
     {
@@ -284,22 +197,51 @@ function updateTrayMenu() {
         {
           label: 'Dark',
           type: 'radio',
-          checked: currentTheme === 'dark',
+          checked: settings.theme === 'dark',
           click: () => {
-            setTheme('dark');
+            settings.theme = 'dark';
+            settingsStorage.write(settings);
+            if (mainWindow) {
+              mainWindow.webContents.send('theme-changed', 'dark');
+            }
+            updateTrayMenu();
           }
         },
         {
           label: 'Light',
           type: 'radio',
-          checked: currentTheme === 'light',
+          checked: settings.theme === 'light',
           click: () => {
-            setTheme('light');
+            settings.theme = 'light';
+            settingsStorage.write(settings);
+            if (mainWindow) {
+              mainWindow.webContents.send('theme-changed', 'light');
+            }
+            updateTrayMenu();
           }
         }
       ]
     },
     { type: 'separator' },
+    {
+      label: 'Test Notification',
+      click: () => {
+        if (Notification.isSupported()) {
+          try {
+            const notification = new Notification({
+              title: 'NoteMinder Test',
+              body: 'This is a test notification. If you see this, notifications are working!',
+              silent: false
+            });
+            notification.show();
+          } catch (error) {
+            console.error('Test notification failed:', error);
+          }
+        } else {
+          console.error('Notifications not supported');
+        }
+      }
+    },
     {
       label: 'Quit',
       click: () => {
@@ -308,444 +250,168 @@ function updateTrayMenu() {
     }
   ]);
   
-  if (tray) {
-    tray.setContextMenu(contextMenu);
-  }
+  tray.setContextMenu(contextMenu);
+  tray.setToolTip('NoteMinder');
 }
 
-function setTheme(theme) {
-  try {
-    // Save theme to settings
-    let settings = {};
-    if (fs.existsSync(SETTINGS_FILE)) {
-      settings = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
-    }
-    settings.theme = theme;
-    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
-    
-    // Update tray menu
-    updateTrayMenu();
-    
-    // Notify renderer
-    if (mainWindow) {
-      mainWindow.webContents.send('theme-changed', theme);
-    }
-  } catch (error) {
-    console.error('Error setting theme:', error);
-  }
-}
+// IPC Handlers
+ipcMain.handle('get-notes', () => {
+  return notesStorage.read() || [];
+});
 
-function toggleStayInView() {
-  try {
-    // Load current settings
-    let settings = {};
-    if (fs.existsSync(SETTINGS_FILE)) {
-      settings = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
-    }
-    
-    // Toggle stayInView
-    settings.stayInView = !settings.stayInView;
-    fs.writeFileSync(SETTINGS_FILE, JSON.stringify(settings, null, 2));
-    
-    // Update tray menu
-    updateTrayMenu();
-    
-    // Notify renderer
-    if (mainWindow) {
-      mainWindow.webContents.send('stay-in-view-changed', settings.stayInView);
-    }
-  } catch (error) {
-    console.error('Error toggling stay in view:', error);
-  }
-}
+ipcMain.handle('save-notes', (event, notes) => {
+  return notesStorage.write(notes);
+});
 
-// STEP 3: Add verification function for debugging
-function checkDockStatus() {
-  if (process.platform === 'darwin') {
-    console.log('=== DOCK STATUS CHECK ===');
-    if (app.dock) {
-      console.log('Dock API available: Yes');
-      console.log('Dock is visible:', app.dock.isVisible());
-    } else {
-      console.log('Dock API available: No');
-    }
-    console.log('========================');
-  }
-}
+ipcMain.handle('get-settings', () => {
+  return settingsStorage.read() || { theme: 'dark', stayInView: false };
+});
 
-function createTray() {
-  // Determine the correct icon path for both development and production
-  let iconPath;
-  
-  if (app.isPackaged) {
-    // In production, resources are in the app.asar or Resources folder
-    iconPath = path.join(process.resourcesPath, 'build', 'icon16x16.png');
-  } else {
-    // In development
-    iconPath = path.join(__dirname, 'build', 'icon16x16.png');
-  }
-  
-  console.log('Tray icon path:', iconPath);
-  console.log('Icon exists:', fs.existsSync(iconPath));
-  
-  // Verify icon exists, fallback to template icon if needed
-  if (!fs.existsSync(iconPath)) {
-    console.error('Tray icon not found at:', iconPath);
-    // Try alternative path
-    iconPath = path.join(__dirname, 'build', 'icon16x16.png');
-    console.log('Trying alternative path:', iconPath);
-  }
-  
-  try {
-    tray = new Tray(iconPath);
-    console.log('Tray created successfully');
+ipcMain.handle('save-settings', (event, settings) => {
+  settingsStorage.write(settings);
+  updateTrayMenu();
+  return true;
+});
+
+ipcMain.on('resize-window', (event, width) => {
+  if (mainWindow) {
+    const bounds = mainWindow.getBounds();
+    const { screen } = require('electron');
+    const primaryDisplay = screen.getPrimaryDisplay();
+    const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
     
-    updateTrayMenu();
-    
-    tray.setToolTip('NoteMinder');
-    
-    // Add click handler to show/focus window
-    tray.on('click', () => {
-      console.log('Tray icon clicked');
-      if (mainWindow) {
-        if (mainWindow.isVisible()) {
-          mainWindow.focus();
-        } else {
-          mainWindow.show();
-          mainWindow.focus();
-          
-          // Re-hide dock after showing window
-          if (process.platform === 'darwin' && app.dock) {
-            setTimeout(() => {
-              app.dock.hide();
-            }, 100);
-          }
-        }
-      }
+    // Position window at right edge of screen
+    mainWindow.setBounds({
+      x: screenWidth - width,
+      y: Math.floor((screenHeight - bounds.height) / 2),
+      width: width,
+      height: bounds.height
     });
-    
-    // Check dock status after tray is created
-    setTimeout(() => {
-      checkDockStatus();
-    }, 1000);
-  } catch (error) {
-    console.error('Error creating tray:', error);
-  }
-}
-
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
   }
 });
 
-// IPC handlers for note management
-ipcMain.handle('load-notes', async () => {
-  try {
-    if (fs.existsSync(NOTES_FILE)) {
-      const data = fs.readFileSync(NOTES_FILE, 'utf8');
-      return JSON.parse(data);
-    }
-    return [];
-  } catch (error) {
-    console.error('Error loading notes:', error);
-    return [];
-  }
+ipcMain.on('set-collapsed', (event, collapsed) => {
+  isCollapsed = collapsed;
 });
 
-ipcMain.handle('save-notes', async (event, notes) => {
-  try {
-    fs.writeFileSync(NOTES_FILE, JSON.stringify(notes, null, 2));
-    return { success: true };
-  } catch (error) {
-    console.error('Error saving notes:', error);
-    return { success: false, error: error.message };
-  }
-});
-
-ipcMain.handle('minimize-window', () => {
+ipcMain.on('set-ignore-mouse', (event, ignore) => {
   if (mainWindow) {
-    mainWindow.minimize();
+    mainWindow.setIgnoreMouseEvents(ignore, { forward: true });
   }
 });
 
-ipcMain.handle('close-window', () => {
-  if (mainWindow) {
-    mainWindow.close();
-  }
-});
-
-ipcMain.handle('open-external', async (event, url) => {
-  try {
-    await shell.openExternal(url);
-    return { success: true };
-  } catch (error) {
-    console.error('Error opening external link:', error);
-    return { success: false, error: error.message };
-  }
-});
-
-ipcMain.handle('schedule-reminder', async (event, reminder) => {
-  try {
-    // Reminder scheduling is handled in the renderer process
-    // This handler is here for future server-side scheduling if needed
-    return { success: true };
-  } catch (error) {
-    console.error('Error scheduling reminder:', error);
-    return { success: false, error: error.message };
-  }
-});
-
-ipcMain.handle('show-notification', async (event, options) => {
-  try {
-    console.log('=== NOTIFICATION DEBUG ===');
-    console.log('Attempting to show notification:', options);
-    console.log('Notification supported:', Notification.isSupported());
-    console.log('Current time:', new Date().toString());
-    
-    if (!Notification.isSupported()) {
-      console.error('Notifications are not supported on this system');
-      return { success: false, error: 'Notifications not supported' };
+ipcMain.on('show-notification', (event, { title, body, noteId }) => {
+  // Check if notifications are supported
+  if (!Notification.isSupported()) {
+    console.error('Notifications are not supported on this system');
+    if (mainWindow) {
+      mainWindow.webContents.send('show-message', {
+        type: 'error',
+        message: 'Notifications are not supported on this system'
+      });
     }
-    
+    return;
+  }
+
+  try {
     const notification = new Notification({
-      title: options.title,
-      body: options.body,
+      title: title,
+      body: body,
       silent: false
     });
     
-    notification.on('show', () => {
-      console.log('Notification shown successfully!');
-    });
-    
     notification.on('click', () => {
-      console.log('Notification clicked!');
-      // Focus the window and send note ID to renderer
       if (mainWindow) {
         mainWindow.show();
         mainWindow.focus();
-        mainWindow.webContents.send('notification-clicked', options.noteId);
+        mainWindow.webContents.send('open-note', noteId);
       }
     });
     
-    notification.on('close', () => {
-      console.log('Notification closed');
-    });
-    
-    notification.on('failed', (event, error) => {
-      console.error('Notification failed:', error);
-    });
-    
     notification.show();
-    console.log('Notification.show() called');
-    console.log('=========================');
-    
-    return { success: true };
   } catch (error) {
-    console.error('Error showing notification:', error);
-    return { success: false, error: error.message };
-  }
-});
-
-ipcMain.handle('resize-window', async (event, width, height) => {
-  try {
+    console.error('Failed to show notification:', error);
     if (mainWindow) {
-      const currentBounds = mainWindow.getBounds();
-      const { width: screenWidth } = screen.getPrimaryDisplay().workAreaSize;
-      
-      // Keep window aligned to right edge
-      mainWindow.setBounds({
-        x: screenWidth - width,
-        y: currentBounds.y,
-        width: width,
-        height: height
+      mainWindow.webContents.send('show-message', {
+        type: 'error',
+        message: 'Failed to show notification. Please check system permissions.'
       });
     }
-    return { success: true };
-  } catch (error) {
-    console.error('Error resizing window:', error);
-    return { success: false, error: error.message };
   }
 });
 
-ipcMain.handle('get-window-size', async () => {
-  try {
-    if (mainWindow) {
-      const bounds = mainWindow.getBounds();
-      return { width: bounds.width, height: bounds.height };
-    }
-    return { width: 400, height: 600 };
-  } catch (error) {
-    console.error('Error getting window size:', error);
-    return { width: 400, height: 600 };
-  }
+ipcMain.handle('check-notification-permission', async () => {
+  return Notification.isSupported();
 });
 
-ipcMain.handle('set-ignore-mouse-events', async (event, ignore, options = {}) => {
-  try {
-    if (mainWindow) {
-      mainWindow.setIgnoreMouseEvents(ignore, { forward: true });
-    }
-    return { success: true };
-  } catch (error) {
-    console.error('Error setting ignore mouse events:', error);
-    return { success: false, error: error.message };
+ipcMain.handle('import-markdown', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Import Markdown',
+    filters: [
+      { name: 'Markdown', extensions: ['md', 'markdown'] }
+    ],
+    properties: ['openFile']
+  });
+  
+  if (!result.canceled && result.filePaths.length > 0) {
+    const fs = require('fs');
+    const content = fs.readFileSync(result.filePaths[0], 'utf8');
+    return { success: true, content };
   }
+  
+  return { success: false };
 });
 
-ipcMain.handle('get-theme', async () => {
-  try {
-    if (fs.existsSync(SETTINGS_FILE)) {
-      const settings = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
-      return settings.theme || 'dark';
-    }
-    return 'dark';
-  } catch (error) {
-    console.error('Error loading theme:', error);
-    return 'dark';
-  }
-});
-
-ipcMain.handle('get-stay-in-view', async () => {
-  try {
-    if (fs.existsSync(SETTINGS_FILE)) {
-      const settings = JSON.parse(fs.readFileSync(SETTINGS_FILE, 'utf8'));
-      return settings.stayInView || false;
-    }
-    return false;
-  } catch (error) {
-    console.error('Error loading stay in view setting:', error);
-    return false;
-  }
-});
-
-ipcMain.handle('export-notes', async () => {
-  try {
-    const result = await dialog.showSaveDialog(mainWindow, {
-      title: 'Export Notes',
-      defaultPath: `NoteMinder-Export-${new Date().toISOString().split('T')[0]}.json`,
-      filters: [
-        { name: 'JSON Files', extensions: ['json'] },
-        { name: 'All Files', extensions: ['*'] }
-      ]
+// App lifecycle
+app.whenReady().then(async () => {
+  createWindow();
+  createTray();
+  
+  // Request notification permissions on macOS
+  if (process.platform === 'darwin') {
+    // macOS requires explicit permission request
+    app.setAboutPanelOptions({
+      applicationName: 'NoteMinder',
+      applicationVersion: '1.0.0'
     });
-
-    if (result.canceled) {
-      return { success: false, canceled: true };
-    }
-
-    // Read current notes
-    let notes = [];
-    if (fs.existsSync(NOTES_FILE)) {
-      const data = fs.readFileSync(NOTES_FILE, 'utf8');
-      notes = JSON.parse(data);
-    }
-
-    // Write to selected file
-    fs.writeFileSync(result.filePath, JSON.stringify(notes, null, 2));
     
-    return { success: true, path: result.filePath, count: notes.length };
-  } catch (error) {
-    console.error('Error exporting notes:', error);
-    return { success: false, error: error.message };
+    // Show a test notification to trigger permission request
+    if (Notification.isSupported()) {
+      try {
+        const testNotification = new Notification({
+          title: 'NoteMinder',
+          body: 'Notifications are enabled! You will receive reminder alerts.',
+          silent: true
+        });
+        testNotification.show();
+        console.log('Test notification sent to request permissions');
+      } catch (error) {
+        console.error('Failed to send test notification:', error);
+      }
+    }
+  }
+  
+  // Initialize reminder manager
+  reminderManager = new ReminderManager(() => {
+    if (mainWindow) {
+      mainWindow.webContents.send('check-reminders');
+    }
+  });
+  reminderManager.start();
+});
+
+app.on('window-all-closed', () => {
+  // Don't quit on window close
+});
+
+app.on('before-quit', () => {
+  if (reminderManager) {
+    reminderManager.stop();
   }
 });
 
-ipcMain.handle('import-notes', async () => {
-  try {
-    const result = await dialog.showOpenDialog(mainWindow, {
-      title: 'Import Notes',
-      filters: [
-        { name: 'JSON Files', extensions: ['json'] },
-        { name: 'All Files', extensions: ['*'] }
-      ],
-      properties: ['openFile']
-    });
-
-    if (result.canceled) {
-      return { success: false, canceled: true };
-    }
-
-    // Read the imported file
-    const importedData = fs.readFileSync(result.filePaths[0], 'utf8');
-    const importedNotes = JSON.parse(importedData);
-
-    if (!Array.isArray(importedNotes)) {
-      return { success: false, error: 'Invalid notes file format' };
-    }
-
-    // Load existing notes
-    let existingNotes = [];
-    if (fs.existsSync(NOTES_FILE)) {
-      const data = fs.readFileSync(NOTES_FILE, 'utf8');
-      existingNotes = JSON.parse(data);
-    }
-
-    // Merge notes (imported notes are added, duplicates by ID are skipped)
-    const existingIds = new Set(existingNotes.map(n => n.id));
-    const newNotes = importedNotes.filter(n => !existingIds.has(n.id));
-    const mergedNotes = [...existingNotes, ...newNotes];
-
-    // Save merged notes
-    fs.writeFileSync(NOTES_FILE, JSON.stringify(mergedNotes, null, 2));
-
-    return { 
-      success: true, 
-      imported: newNotes.length,
-      skipped: importedNotes.length - newNotes.length,
-      total: mergedNotes.length
-    };
-  } catch (error) {
-    console.error('Error importing notes:', error);
-    return { success: false, error: error.message };
-  }
-});
-
-ipcMain.handle('get-notes-location', async () => {
-  return {
-    path: NOTES_FILE,
-    directory: app.getPath('userData')
-  };
-});
-
-ipcMain.handle('hide-window', () => {
-  if (mainWindow) {
-    mainWindow.hide();
-  }
-});
-
-ipcMain.handle('show-window', () => {
-  if (mainWindow) {
-    mainWindow.show();
-    mainWindow.focus();
-    
-    // Re-hide dock after showing window
-    if (process.platform === 'darwin' && app.dock) {
-      setTimeout(() => {
-        app.dock.hide();
-      }, 100);
-    }
-  }
-});
-
-ipcMain.handle('loader-complete', () => {
-  if (mainWindow) {
-    console.log('Loader complete - showing window');
-    mainWindow.show();
-    mainWindow.focus();
-    
-    // CRITICAL: Aggressively re-hide dock after showing window
-    if (process.platform === 'darwin' && app.dock) {
-      // Try multiple times with increasing delays to ensure it sticks
-      const hideAttempts = [0, 50, 100, 200, 500];
-      hideAttempts.forEach(delay => {
-        setTimeout(() => {
-          if (app.dock.isVisible()) {
-            app.dock.hide();
-            console.log(`Dock re-hidden after ${delay}ms`);
-          }
-        }, delay);
-      });
-    }
+app.on('activate', () => {
+  if (BrowserWindow.getAllWindows().length === 0) {
+    createWindow();
   }
 });
