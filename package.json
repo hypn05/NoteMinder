@@ -6,7 +6,8 @@
   "scripts": {
     "start": "electron .",
     "build": "electron-builder",
-    "build-mac": "electron-builder --mac"
+    "build-mac": "electron-builder --mac",
+    "release": "./scripts/release.sh"
   },
   "keywords": [
     "notes",

@@ -11,6 +11,7 @@ let mainWindow = null;
 let tray = null;
 let reminderManager = null;
 let isCollapsed = true;
+let currentScreenId = null;
 
 // Hide dock icon on macOS before app is ready
 if (process.platform === 'darwin') {
@@ -18,12 +19,24 @@ if (process.platform === 'darwin') {
 }
 
 function createWindow() {
-  const settings = settingsStorage.read() || { theme: 'dark', stayInView: false };
+  const settings = settingsStorage.read() || { theme: 'dark', stayInView: false, screenId: null };
   
   // Get screen dimensions
   const { screen } = require('electron');
-  const primaryDisplay = screen.getPrimaryDisplay();
-  const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+  const displays = screen.getAllDisplays();
+  
+  // Find the selected screen or use primary display
+  let targetDisplay = screen.getPrimaryDisplay();
+  if (settings.screenId) {
+    const savedDisplay = displays.find(d => d.id === settings.screenId);
+    if (savedDisplay) {
+      targetDisplay = savedDisplay;
+    }
+  }
+  
+  currentScreenId = targetDisplay.id;
+  const { width: screenWidth, height: screenHeight } = targetDisplay.workAreaSize;
+  const { x: screenX, y: screenY } = targetDisplay.bounds;
   
   // Calculate 80% of screen height
   const windowHeight = Math.floor(screenHeight * 0.8);
@@ -49,7 +62,7 @@ function createWindow() {
   mainWindow.loadFile('index.html');
   
   // Position window at right edge of screen, centered vertically
-  mainWindow.setPosition(screenWidth - 30, Math.floor((screenHeight - windowHeight) / 2));
+  mainWindow.setPosition(screenX + screenWidth - 30, screenY + Math.floor((screenHeight - windowHeight) / 2));
 
   // Set window properties
   mainWindow.setAlwaysOnTop(true, 'floating');
@@ -118,7 +131,34 @@ function createTray() {
 }
 
 function updateTrayMenu() {
-  const settings = settingsStorage.read() || { theme: 'dark', stayInView: false };
+  const settings = settingsStorage.read() || { theme: 'dark', stayInView: false, screenId: null };
+  const { screen } = require('electron');
+  const displays = screen.getAllDisplays();
+  
+  // Build screen selection submenu
+  const screenSubmenu = displays.map((display, index) => {
+    const isPrimary = display.id === screen.getPrimaryDisplay().id;
+    const label = isPrimary 
+      ? `Screen ${index + 1} (Primary) - ${display.bounds.width}x${display.bounds.height}`
+      : `Screen ${index + 1} - ${display.bounds.width}x${display.bounds.height}`;
+    
+    return {
+      label: label,
+      type: 'radio',
+      checked: display.id === (settings.screenId || screen.getPrimaryDisplay().id),
+      click: () => {
+        settings.screenId = display.id;
+        settingsStorage.write(settings);
+        
+        // Reposition window to the new screen
+        if (mainWindow) {
+          repositionWindow(display.id);
+        }
+        
+        updateTrayMenu();
+      }
+    };
+  });
   
   const contextMenu = Menu.buildFromTemplate([
     {
@@ -205,6 +245,10 @@ function updateTrayMenu() {
     },
     { type: 'separator' },
     {
+      label: 'Display Screen',
+      submenu: screenSubmenu
+    },
+    {
       label: 'Stay in View',
       type: 'checkbox',
       checked: settings.stayInView,
@@ -277,6 +321,29 @@ function updateTrayMenu() {
   tray.setToolTip('NoteMinder');
 }
 
+function repositionWindow(screenId) {
+  if (!mainWindow) return;
+  
+  const { screen } = require('electron');
+  const displays = screen.getAllDisplays();
+  const targetDisplay = displays.find(d => d.id === screenId);
+  
+  if (!targetDisplay) return;
+  
+  currentScreenId = screenId;
+  const bounds = mainWindow.getBounds();
+  const { width: screenWidth, height: screenHeight } = targetDisplay.workAreaSize;
+  const { x: screenX, y: screenY } = targetDisplay.bounds;
+  
+  // Position window at right edge of the target screen
+  mainWindow.setBounds({
+    x: screenX + screenWidth - bounds.width,
+    y: screenY + Math.floor((screenHeight - bounds.height) / 2),
+    width: bounds.width,
+    height: bounds.height
+  });
+}
+
 // IPC Handlers
 ipcMain.handle('get-notes', () => {
   return notesStorage.read() || [];
@@ -300,13 +367,22 @@ ipcMain.on('resize-window', (event, width) => {
   if (mainWindow) {
     const bounds = mainWindow.getBounds();
     const { screen } = require('electron');
-    const primaryDisplay = screen.getPrimaryDisplay();
-    const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+    const displays = screen.getAllDisplays();
+    
+    // Find the current screen
+    let targetDisplay = displays.find(d => d.id === currentScreenId);
+    if (!targetDisplay) {
+      targetDisplay = screen.getPrimaryDisplay();
+      currentScreenId = targetDisplay.id;
+    }
+    
+    const { width: screenWidth, height: screenHeight } = targetDisplay.workAreaSize;
+    const { x: screenX, y: screenY } = targetDisplay.bounds;
     
     // Position window at right edge of screen
     mainWindow.setBounds({
-      x: screenWidth - width,
-      y: Math.floor((screenHeight - bounds.height) / 2),
+      x: screenX + screenWidth - width,
+      y: screenY + Math.floor((screenHeight - bounds.height) / 2),
       width: width,
       height: bounds.height
     });
