@@ -2,6 +2,11 @@
 
 A beautiful, minimalist note-taking app that lives on the edge of your screen with smart reminders.
 
+## Screenshots
+
+![Checklist Feature](images/Checklist.png)
+*Task list management with checkboxes*
+
 ## Features
 
 - **Edge-Docked Interface**: Stays on the right edge of your screen, always accessible
