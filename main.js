@@ -81,7 +81,30 @@ function createWindow() {
 }
 
 function createTray() {
-  const iconPath = path.join(__dirname, 'build', 'icon16x16.png');
+  // Try multiple icon paths for development and production
+  let iconPath;
+  const fs = require('fs');
+  
+  const possiblePaths = [
+    path.join(__dirname, 'build', 'icon16x16.png'),
+    path.join(process.resourcesPath, 'build', 'icon16x16.png'),
+  ];
+  
+  // Find the first existing icon
+  for (const testPath of possiblePaths) {
+    if (fs.existsSync(testPath)) {
+      iconPath = testPath;
+      console.log('Using tray icon:', iconPath);
+      break;
+    }
+  }
+  
+  if (!iconPath) {
+    console.error('No tray icon found! Tried paths:', possiblePaths);
+    // Create a simple tray without icon as fallback
+    iconPath = possiblePaths[0]; // Use first path anyway
+  }
+  
   tray = new Tray(iconPath);
   
   updateTrayMenu();
