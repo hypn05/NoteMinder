@@ -29,6 +29,24 @@ A beautiful, minimalist note-taking app that lives on the edge of your screen wi
 
 ## Installation
 
+### Download Pre-built Releases
+
+Download the latest version for your platform from the [Releases page](https://github.com/hypn05/NoteMinder/releases):
+
+- **macOS**: Download `NoteMinder-X.X.X-arm64.dmg` (Apple Silicon) or `NoteMinder-X.X.X.dmg` (Intel)
+  - Open the DMG file
+  - Drag NoteMinder to your Applications folder
+  - Right-click and select "Open" the first time (macOS security)
+  
+- **Windows**: Download `NoteMinder-Setup-X.X.X.exe`
+  - Run the installer
+  - Follow the installation wizard
+  - Launch from Start Menu or Desktop shortcut
+  
+- **Linux**: Download `NoteMinder-X.X.X.AppImage`
+  - Make it executable: `chmod +x NoteMinder-X.X.X.AppImage`
+  - Run: `./NoteMinder-X.X.X.AppImage`
+
 ### From Source
 
 1. Clone the repository
@@ -47,13 +65,13 @@ Build for your platform:
 
 ```bash
 # macOS
-npm run build:mac
+npm run build -- --mac
 
 # Windows
-npm run build:win
+npm run build -- --win
 
 # Linux
-npm run build:linux
+npm run build -- --linux
 
 # All platforms
 npm run build
@@ -123,6 +141,39 @@ Notes and settings are stored locally in JSON files:
 - **macOS**: `~/Library/Application Support/NoteMinder/`
 - **Windows**: `%APPDATA%/NoteMinder/`
 - **Linux**: `~/.config/NoteMinder/`
+
+## Creating a Release
+
+To create a new versioned release with builds for all platforms:
+
+1. Ensure all changes are committed
+2. Run the release script:
+   ```bash
+   ./scripts/release.sh
+   ```
+3. Follow the prompts to:
+   - Set the new version number (e.g., 1.0.1)
+   - Build for all platforms (macOS, Windows, Linux)
+   - Create a git tag
+   - Push changes to GitHub
+
+4. Upload release assets to GitHub:
+   - Go to the [Releases page](https://github.com/hypn05/NoteMinder/releases)
+   - Click "Draft a new release"
+   - Select the newly created tag
+   - Upload the build files from `releases/vX.X.X/`
+   - Add release notes
+   - Publish the release
+
+### Using GitHub CLI (Optional)
+
+If you have [GitHub CLI](https://cli.github.com/) installed, you can create the release automatically:
+
+```bash
+gh release create v1.0.1 releases/v1.0.1/* \
+  --title "NoteMinder v1.0.1" \
+  --notes "Release notes here"
+```
 
 ## Development
 
