@@ -1,0 +1,62 @@
+/* Reusable CSS variables for theming */
+:root {
+  /* Dark theme (default) */
+  --bg-primary: rgba(20, 20, 30, 0.95);
+  --bg-secondary: rgba(30, 30, 45, 0.95);
+  --bg-tertiary: rgba(40, 40, 60, 0.95);
+  --bg-hover: rgba(50, 50, 70, 0.95);
+  --bg-active: rgba(60, 60, 80, 0.95);
+  
+  --text-primary: #e0e0e0;
+  --text-secondary: #a0a0a0;
+  --text-tertiary: #707070;
+  
+  --accent-primary: #7c3aed;
+  --accent-secondary: #6366f1;
+  --accent-hover: #8b5cf6;
+  
+  --border-color: rgba(255, 255, 255, 0.1);
+  --shadow-color: rgba(0, 0, 0, 0.3);
+  
+  --success-color: #10b981;
+  --warning-color: #f59e0b;
+  --error-color: #ef4444;
+  
+  /* Spacing */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+  
+  /* Border radius */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  
+  /* Transitions */
+  --transition-fast: 0.15s ease;
+  --transition-normal: 0.3s ease;
+  --transition-slow: 0.5s ease;
+  
+  /* Sidebar */
+  --sidebar-width-collapsed: 30px;
+  --sidebar-width-expanded: 400px;
+}
+
+/* Light theme */
+body.light-theme {
+  --bg-primary: rgba(255, 255, 255, 0.95);
+  --bg-secondary: rgba(245, 245, 250, 0.95);
+  --bg-tertiary: rgba(235, 235, 245, 0.95);
+  --bg-hover: rgba(225, 225, 240, 0.95);
+  --bg-active: rgba(215, 215, 235, 0.95);
+  
+  --text-primary: #1a1a1a;
+  --text-secondary: #4a4a4a;
+  --text-tertiary: #8a8a8a;
+  
+  --border-color: rgba(0, 0, 0, 0.1);
+  --shadow-color: rgba(0, 0, 0, 0.1);
+}
