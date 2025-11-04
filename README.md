@@ -1,112 +1,158 @@
 # NoteMinder
 
-A beautiful, clutter-free note-taking application for macOS with reminders and a collapsible sidebar interface.
+A beautiful, minimalist note-taking app that lives on the edge of your screen with smart reminders.
 
 ## Features
 
-✨ **Clutter-Free Interface**: The app hides on the side of your screen with just an arrow tab visible. Click to expand!
-
-📝 **Rich Note Taking**: Create notes with text and images
-
-🎨 **Custom Background Colors**: Choose any background color for your notes
-
-🖼️ **Image Support**: Add images via upload or drag-and-drop, and reposition them dynamically within your notes
-
-💾 **Persistent Storage**: All notes are automatically saved locally
-
-🍎 **Native macOS App**: Built with Electron for a native macOS experience
+- **Edge-Docked Interface**: Stays on the right edge of your screen, always accessible
+- **Collapsible Sidebar**: Click the arrow tab to expand/collapse the notes list
+- **Rich Text Editor**: Full formatting support including:
+  - Bold, italic, underline
+  - Headings (H1, H2, H3)
+  - Lists (bullet, numbered, task lists)
+  - Code blocks and inline code
+  - Blockquotes
+  - Links and images
+  - Drag & drop image support
+- **Smart Reminders**: Set one-time, daily, or weekly reminders for your notes
+- **Color Coding**: Customize note backgrounds with color themes
+- **Search**: Quickly find notes with instant search
+- **Import/Export**: Import markdown files and export notes as JSON
+- **Themes**: Dark and light theme support
+- **Always on Top**: Stays visible across all workspaces (macOS)
+- **Click-Through**: When collapsed, clicks pass through to apps behind it
 
 ## Installation
 
-1. Install dependencies:
+### From Source
+
+1. Clone the repository
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
+3. Run the app:
+   ```bash
+   npm start
+   ```
+
+### Build Distribution
+
+Build for your platform:
+
 ```bash
-npm install
+# macOS
+npm run build:mac
+
+# Windows
+npm run build:win
+
+# Linux
+npm run build:linux
+
+# All platforms
+npm run build
 ```
-
-2. Run the app in development mode:
-```bash
-npm start
-```
-
-## Building for macOS
-
-To build a native macOS application:
-
-```bash
-npm run build-mac
-```
-
-This will create a `.dmg` file in the `dist` folder that you can install on any macOS system.
 
 ## Usage
 
-1. **Opening the App**: Click the arrow tab on the right side of your screen to expand the notes panel
+### Basic Operations
 
-2. **Creating a Note**: 
-   - Click the `+` button in the header
-   - Choose a background color using the color picker
-   - Type your note content
-   - Add images by clicking the 📷 button or dragging images into the editor
-   - Click "Save Note"
+- **Create Note**: Click the "➕ New Note" button or use the tray menu
+- **Edit Note**: Click on a note card to open it in the editor
+- **Delete Note**: Hover over a note card and click the 🗑️ icon
+- **Search**: Type in the search box to filter notes
 
-3. **Editing a Note**: Click on any note card to edit it
+### Formatting
 
-4. **Deleting a Note**: Hover over a note card and click the `×` button
+Use the toolbar buttons to format your text:
+- **B/I/U**: Bold, italic, underline
+- **H**: Insert headings (H1, H2, H3)
+- **Insert**: Add code, code blocks, blockquotes, or links
+- **List**: Create bullet lists, numbered lists, or task lists
+- **🖼️**: Insert images
 
-5. **Repositioning Images**: In the editor, click and drag images to reposition them within your note
+### Reminders
 
-6. **Collapsing the App**: Click the arrow tab again to hide the app
+1. Click the ⏰ button on a note card or in the editor header
+2. Choose reminder type:
+   - **One-time**: Set a specific date and time
+   - **Daily**: Repeats every day at the specified time
+   - **Weekly**: Repeats on a specific day of the week
+3. Add an optional message
+4. Click "Set Reminder"
 
-## Keyboard Shortcuts
+### Customization
 
-- The app stays on top of all other windows for easy access
-- Minimize button: Minimizes the app to the dock
-- Close button: Closes the application
+- **Background Color**: Click the 🎨 button to choose a color for the current note
+- **Theme**: Right-click the tray icon → Theme → Dark/Light
+- **Stay in View**: Right-click the tray icon → Stay in View (prevents auto-collapse)
+
+### Import/Export
+
+- **Import Markdown**: Click the 📄 button to import a .md file
+- **Export Notes**: Right-click the tray icon → Export Notes
+- **Import Notes**: Right-click the tray icon → Import Notes
+
+## Architecture
+
+The app is built with a clean, reusable component structure:
+
+### Components
+- **Modal**: Reusable modal dialog component
+- **Editor**: Rich text editor with formatting capabilities
+- **NoteCard**: Note preview card with actions
+
+### Utilities
+- **Storage**: JSON file-based storage manager
+- **ReminderManager**: Handles reminder scheduling and notifications
+
+### Styles
+- **variables.css**: CSS custom properties for theming
+- **components.css**: Reusable component styles
+- **main.css**: Application-specific styles
 
 ## Data Storage
 
-Notes are stored locally in your system's application data directory:
-- macOS: `~/Library/Application Support/noteminder/notes.json`
+Notes and settings are stored locally in JSON files:
+- **macOS**: `~/Library/Application Support/NoteMinder/`
+- **Windows**: `%APPDATA%/NoteMinder/`
+- **Linux**: `~/.config/NoteMinder/`
 
-## Customization
+## Development
 
-You can customize the app by modifying:
-- `styles.css` - Change colors, fonts, and layout
-- `main.js` - Adjust window size, position, and behavior
-- `package.json` - Update app name, version, and build settings
+### Project Structure
 
-## Building with Custom Icon
+```
+noteMinder/
+├── main.js              # Electron main process
+├── renderer.js          # Renderer process logic
+├── index.html           # Main HTML structure
+├── components/          # Reusable UI components
+│   ├── modal.js
+│   ├── editor.js
+│   └── noteCard.js
+├── utils/              # Utility modules
+│   ├── storage.js
+│   └── reminder.js
+├── styles/             # CSS files
+│   ├── variables.css
+│   ├── components.css
+│   └── main.css
+└── build/              # App icons and resources
+```
 
-To add a custom icon:
-1. Create a 1024x1024 PNG image
-2. Convert it to `.icns` format using online tools or:
-   ```bash
-   # Create iconset directory
-   mkdir MyIcon.iconset
-   
-   # Generate different sizes (requires ImageMagick)
-   sips -z 16 16     icon.png --out MyIcon.iconset/icon_16x16.png
-   sips -z 32 32     icon.png --out MyIcon.iconset/icon_16x16@2x.png
-   sips -z 32 32     icon.png --out MyIcon.iconset/icon_32x32.png
-   sips -z 64 64     icon.png --out MyIcon.iconset/icon_32x32@2x.png
-   sips -z 128 128   icon.png --out MyIcon.iconset/icon_128x128.png
-   sips -z 256 256   icon.png --out MyIcon.iconset/icon_128x128@2x.png
-   sips -z 256 256   icon.png --out MyIcon.iconset/icon_256x256.png
-   sips -z 512 512   icon.png --out MyIcon.iconset/icon_256x256@2x.png
-   sips -z 512 512   icon.png --out MyIcon.iconset/icon_512x512.png
-   sips -z 1024 1024 icon.png --out MyIcon.iconset/icon_512x512@2x.png
-   
-   # Convert to icns
-   iconutil -c icns MyIcon.iconset
-   ```
-3. Replace `build/icon.icns` with your generated file
+### Key Technologies
 
-## Cross-Platform Support
-
-While optimized for macOS, this app can also be built for:
-- **Windows**: `npm run build` (creates NSIS installer)
-- **Linux**: `npm run build` (creates AppImage)
+- **Electron**: Cross-platform desktop app framework
+- **Node.js**: JavaScript runtime
+- **CSS Variables**: For theming support
+- **ContentEditable**: For rich text editing
 
 ## License
 
-MIT License - Feel free to use and modify as needed!
+MIT License - feel free to use and modify as needed.
+
+## Credits
+
+Built with ❤️ using Electron and modern web technologies.
