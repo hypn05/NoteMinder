@@ -1,6 +1,6 @@
 {
   "name": "noteminder",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "Desktop note-taking application with collapsible sidebar",
   "main": "main.js",
   "scripts": {
@@ -46,13 +46,13 @@
       }
     },
     "win": {
-      "icon": "build/icon.png",
+      "icon": "build/icon512x512.png",
       "target": [
         "nsis"
       ]
     },
     "linux": {
-      "icon": "build/icon.png",
+      "icon": "build/icon512x512.png",
       "target": [
         "AppImage"
       ],
