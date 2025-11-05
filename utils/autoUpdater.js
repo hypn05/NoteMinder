@@ -7,6 +7,7 @@ class AutoUpdater {
     this.mainWindow = mainWindow;
     this.updateAvailable = false;
     this.updateDownloaded = false;
+    this.isManualCheck = false;
     
     // Configure logging
     log.transports.file.level = 'info';
@@ -20,12 +21,6 @@ class AutoUpdater {
   }
   
   setupEventHandlers() {
-    // Checking for update
-    autoUpdater.on('checking-for-update', () => {
-      log.info('Checking for update...');
-      this.sendStatusToWindow('Checking for updates...');
-    });
-    
     // Update available
     autoUpdater.on('update-available', (info) => {
       log.info('Update available:', info.version);
@@ -35,22 +30,36 @@ class AutoUpdater {
     
     // Update not available
     autoUpdater.on('update-not-available', (info) => {
-      log.info('Update not available. Current version:', info.version);
       this.updateAvailable = false;
+      
+      // Only show message for manual checks
+      if (this.isManualCheck && this.mainWindow) {
+        this.mainWindow.webContents.send('show-message', {
+          type: 'success',
+          message: 'You are running the latest version!'
+        });
+      }
+      
+      this.isManualCheck = false;
     });
     
     // Error occurred
     autoUpdater.on('error', (err) => {
       log.error('Error in auto-updater:', err);
-      this.sendStatusToWindow('Error checking for updates');
+      
+      // Only show error message for manual checks
+      if (this.isManualCheck && this.mainWindow) {
+        this.mainWindow.webContents.send('show-message', {
+          type: 'error',
+          message: 'Unable to check for updates. Please try again later.'
+        });
+      }
+      
+      this.isManualCheck = false;
     });
     
     // Download progress
     autoUpdater.on('download-progress', (progressObj) => {
-      const message = `Download speed: ${progressObj.bytesPerSecond} - Downloaded ${progressObj.percent}% (${progressObj.transferred}/${progressObj.total})`;
-      log.info(message);
-      this.sendStatusToWindow(message);
-      
       // Send progress to renderer
       if (this.mainWindow) {
         this.mainWindow.webContents.send('download-progress', {
@@ -166,9 +175,6 @@ class AutoUpdater {
   }
   
   downloadUpdate() {
-    log.info('Starting update download...');
-    this.sendStatusToWindow('Downloading update...');
-    
     // Show download progress notification
     if (this.mainWindow) {
       this.mainWindow.webContents.send('update-download-started');
@@ -177,46 +183,30 @@ class AutoUpdater {
     autoUpdater.downloadUpdate();
   }
   
-  sendStatusToWindow(text) {
-    log.info(text);
-    if (this.mainWindow) {
-      this.mainWindow.webContents.send('update-status', text);
-    }
-  }
-  
   // Check for updates manually
-  async checkForUpdates() {
+  async checkForUpdates(isManual = false) {
     try {
-      log.info('Manual update check initiated');
+      this.isManualCheck = isManual;
       const result = await autoUpdater.checkForUpdates();
-      
-      if (!this.updateAvailable) {
-        // No update available, show message
-        if (this.mainWindow) {
-          this.mainWindow.webContents.send('show-message', {
-            type: 'success',
-            message: 'You are running the latest version!'
-          });
-        }
-      }
-      
       return result;
     } catch (error) {
       log.error('Error checking for updates:', error);
-      if (this.mainWindow) {
+      
+      // Show error message for manual checks
+      if (isManual && this.mainWindow) {
         this.mainWindow.webContents.send('show-message', {
           type: 'error',
-          message: 'Failed to check for updates. Please try again later.'
+          message: 'Unable to check for updates. Please try again later.'
         });
       }
+      
+      this.isManualCheck = false;
       return null;
     }
   }
   
   // Start automatic update checks
   start() {
-    log.info('Starting auto-updater...');
-    
     // Check for updates on startup (after a short delay)
     setTimeout(() => {
       this.checkForUpdates();
@@ -234,7 +224,6 @@ class AutoUpdater {
       clearInterval(this.updateInterval);
       this.updateInterval = null;
     }
-    log.info('Auto-updater stopped');
   }
   
   // Get current update status
