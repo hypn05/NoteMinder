@@ -82,6 +82,13 @@ class AutoUpdater {
   }
   
   showUpdateAvailableDialog(info) {
+    // Show and focus the main window, and expand the sidebar
+    if (this.mainWindow) {
+      this.mainWindow.show();
+      this.mainWindow.focus();
+      this.mainWindow.webContents.send('expand-sidebar');
+    }
+    
     const options = {
       type: 'info',
       title: 'Update Available',
