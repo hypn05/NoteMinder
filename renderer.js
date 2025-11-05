@@ -1112,20 +1112,20 @@ function showUpdateNotesModal(updateInfo) {
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
       <div>
         <div style="font-size: 12px; color: var(--text-secondary);">Current Version</div>
-        <div style="font-size: 18px; font-weight: 500;">${updateInfo.currentVersion}</div>
+        <div style="font-size: 18px; font-weight: 500;">${updateInfo.currentVersion || 'Unknown'}</div>
       </div>
       <div style="font-size: 24px; color: var(--text-secondary);">→</div>
       <div>
         <div style="font-size: 12px; color: var(--text-secondary);">New Version</div>
-        <div style="font-size: 18px; font-weight: 500; color: var(--accent-color);">${updateInfo.latestVersion}</div>
+        <div style="font-size: 18px; font-weight: 500; color: var(--accent-color);">${updateInfo.latestVersion || 'Unknown'}</div>
       </div>
     </div>
     <div style="font-size: 12px; color: var(--text-secondary);">
-      Released: ${new Date(updateInfo.publishedAt).toLocaleDateString('en-US', { 
+      Released: ${updateInfo.releaseDate ? new Date(updateInfo.releaseDate).toLocaleDateString('en-US', { 
         year: 'numeric', 
         month: 'long', 
         day: 'numeric' 
-      })}
+      }) : 'Unknown'}
     </div>
   `;
   content.appendChild(versionInfo);
@@ -1151,55 +1151,19 @@ function showUpdateNotesModal(updateInfo) {
     content.appendChild(notesContent);
   }
   
-  // Download buttons
-  if (updateInfo.assets && updateInfo.assets.length > 0) {
-    const downloadTitle = document.createElement('h3');
-    downloadTitle.textContent = 'Downloads';
-    downloadTitle.style.fontSize = '14px';
-    downloadTitle.style.marginBottom = '10px';
-    downloadTitle.style.color = 'var(--text-primary)';
-    content.appendChild(downloadTitle);
-    
-    updateInfo.assets.forEach(asset => {
-      const assetBtn = document.createElement('button');
-      assetBtn.className = 'btn btn-primary';
-      assetBtn.style.width = '100%';
-      assetBtn.style.marginBottom = '8px';
-      assetBtn.style.display = 'flex';
-      assetBtn.style.justifyContent = 'space-between';
-      assetBtn.style.alignItems = 'center';
-      
-      const assetName = document.createElement('span');
-      assetName.textContent = asset.name;
-      
-      const assetSize = document.createElement('span');
-      assetSize.style.fontSize = '12px';
-      assetSize.style.opacity = '0.8';
-      assetSize.textContent = formatFileSize(asset.size);
-      
-      assetBtn.appendChild(assetName);
-      assetBtn.appendChild(assetSize);
-      
-      assetBtn.onclick = () => {
-        ipcRenderer.send('open-external-link', asset.downloadUrl);
-        modal.close();
-      };
-      
-      content.appendChild(assetBtn);
-    });
+  // View on GitHub button (always show this)
+  if (updateInfo.releaseUrl) {
+    const githubBtn = document.createElement('button');
+    githubBtn.className = 'btn btn-primary';
+    githubBtn.style.width = '100%';
+    githubBtn.style.marginTop = '10px';
+    githubBtn.textContent = 'Download from GitHub';
+    githubBtn.onclick = () => {
+      ipcRenderer.send('open-external-link', updateInfo.releaseUrl);
+      modal.close();
+    };
+    content.appendChild(githubBtn);
   }
-  
-  // View on GitHub button
-  const githubBtn = document.createElement('button');
-  githubBtn.className = 'btn';
-  githubBtn.style.width = '100%';
-  githubBtn.style.marginTop = '10px';
-  githubBtn.textContent = 'View on GitHub';
-  githubBtn.onclick = () => {
-    ipcRenderer.send('open-external-link', updateInfo.releaseUrl);
-    modal.close();
-  };
-  content.appendChild(githubBtn);
   
   modal.create(`Update Available - v${updateInfo.latestVersion}`, content);
 }
