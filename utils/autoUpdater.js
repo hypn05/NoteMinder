@@ -1,5 +1,5 @@
 const { autoUpdater } = require('electron-updater');
-const { dialog, Notification } = require('electron');
+const { dialog, Notification, app } = require('electron');
 const log = require('electron-log');
 
 class AutoUpdater {
@@ -8,6 +8,7 @@ class AutoUpdater {
     this.updateAvailable = false;
     this.updateDownloaded = false;
     this.isManualCheck = false;
+    this.updateInfo = null;
     
     // Configure logging
     log.transports.file.level = 'info';
@@ -25,6 +26,7 @@ class AutoUpdater {
     autoUpdater.on('update-available', (info) => {
       log.info('Update available:', info.version);
       this.updateAvailable = true;
+      this.updateInfo = info;
       this.showUpdateAvailableDialog(info);
     });
     
@@ -84,7 +86,7 @@ class AutoUpdater {
       type: 'info',
       title: 'Update Available',
       message: `A new version ${info.version} is available!`,
-      detail: `Current version: ${autoUpdater.currentVersion.version}\nNew version: ${info.version}\n\nRelease date: ${new Date(info.releaseDate).toLocaleDateString()}\n\nWould you like to download it now?`,
+      detail: `Current version: ${app.getVersion()}\nNew version: ${info.version}\n\nRelease date: ${new Date(info.releaseDate).toLocaleDateString()}\n\nWould you like to download it now?`,
       buttons: ['Download Now', 'View Release Notes', 'Later'],
       defaultId: 0,
       cancelId: 2
@@ -188,7 +190,19 @@ class AutoUpdater {
     try {
       this.isManualCheck = isManual;
       const result = await autoUpdater.checkForUpdates();
-      return result;
+      
+      // If update is available, return formatted info for main.js
+      if (this.updateInfo) {
+        return {
+          currentVersion: app.getVersion(),
+          latestVersion: this.updateInfo.version,
+          releaseUrl: `https://github.com/hypn05/NoteMinder/releases/tag/v${this.updateInfo.version}`,
+          releaseDate: this.updateInfo.releaseDate,
+          releaseNotes: this.updateInfo.releaseNotes
+        };
+      }
+      
+      return null;
     } catch (error) {
       log.error('Error checking for updates:', error);
       
@@ -231,7 +245,8 @@ class AutoUpdater {
     return {
       updateAvailable: this.updateAvailable,
       updateDownloaded: this.updateDownloaded,
-      currentVersion: autoUpdater.currentVersion.version
+      currentVersion: app.getVersion(),
+      updateInfo: this.updateInfo
     };
   }
   
