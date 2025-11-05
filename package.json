@@ -1,6 +1,6 @@
 {
   "name": "noteminder",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Desktop note-taking application with collapsible sidebar",
   "main": "main.js",
   "scripts": {
@@ -45,7 +45,13 @@
       "category": "public.app-category.productivity",
       "icon": "build/icon.icns",
       "target": [
-        "dmg"
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
       ],
       "hardenedRuntime": true,
       "entitlements": "build/entitlements.mac.plist",
@@ -67,13 +73,12 @@
       "createStartMenuShortcut": true,
       "shortcutName": "NoteMinder",
       "runAfterFinish": true,
-      "installerIcon": "build/icon512x512.png",
-      "uninstallerIcon": "build/icon512x512.png",
-      "license": "LICENSE",
       "warningsAsErrors": false,
       "deleteAppDataOnUninstall": false,
       "displayLanguageSelector": false,
-      "installerLanguages": ["en_US"],
+      "installerLanguages": [
+        "en_US"
+      ],
       "perMachine": false,
       "allowElevation": true
     },
