@@ -20,9 +20,18 @@
     "electron": "^27.3.11",
     "electron-builder": "^24.13.3"
   },
+  "dependencies": {
+    "electron-log": "^5.4.3",
+    "electron-updater": "^6.6.2"
+  },
   "build": {
     "appId": "com.noteminder.app",
     "productName": "NoteMinder",
+    "publish": {
+      "provider": "github",
+      "owner": "hypn05",
+      "repo": "NoteMinder"
+    },
     "files": [
       "main.js",
       "renderer.js",

@@ -1,7 +1,8 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu, dialog, Notification } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, dialog, Notification, shell } = require('electron');
 const path = require('path');
 const Storage = require('./utils/storage');
 const ReminderManager = require('./utils/reminder');
+const AutoUpdater = require('./utils/autoUpdater');
 
 // Storage instances
 const notesStorage = new Storage('notes.json');
@@ -10,8 +11,10 @@ const settingsStorage = new Storage('settings.json');
 let mainWindow = null;
 let tray = null;
 let reminderManager = null;
+let updateChecker = null;
 let isCollapsed = true;
 let currentScreenId = null;
+let pendingUpdate = null;
 
 // Hide dock icon on macOS before app is ready
 if (process.platform === 'darwin') {
@@ -135,6 +138,17 @@ function updateTrayMenu() {
   const { screen } = require('electron');
   const displays = screen.getAllDisplays();
   
+  // Build update menu item if update is available
+  const updateMenuItem = pendingUpdate ? [
+    {
+      label: `Update Available (v${pendingUpdate.latestVersion})`,
+      click: () => {
+        showUpdateDialog(pendingUpdate);
+      }
+    },
+    { type: 'separator' }
+  ] : [];
+  
   // Build screen selection submenu
   const screenSubmenu = displays.map((display, index) => {
     const isPrimary = display.id === screen.getPrimaryDisplay().id;
@@ -161,6 +175,7 @@ function updateTrayMenu() {
   });
   
   const contextMenu = Menu.buildFromTemplate([
+    ...updateMenuItem,
     {
       label: 'New Note',
       click: () => {
@@ -291,6 +306,26 @@ function updateTrayMenu() {
     },
     { type: 'separator' },
     {
+      label: 'Check for Updates',
+      click: async () => {
+        if (updateChecker) {
+          const updateInfo = await updateChecker.checkForUpdates();
+          if (updateInfo) {
+            pendingUpdate = updateInfo;
+            updateTrayMenu();
+            showUpdateDialog(updateInfo);
+          } else {
+            if (mainWindow) {
+              mainWindow.webContents.send('show-message', {
+                type: 'success',
+                message: 'You are running the latest version!'
+              });
+            }
+          }
+        }
+      }
+    },
+    {
       label: 'Test Notification',
       click: () => {
         if (Notification.isSupported()) {
@@ -319,6 +354,30 @@ function updateTrayMenu() {
   
   tray.setContextMenu(contextMenu);
   tray.setToolTip('NoteMinder');
+}
+
+function showUpdateDialog(updateInfo) {
+  const options = {
+    type: 'info',
+    title: 'Update Available',
+    message: `A new version of NoteMinder is available!`,
+    detail: `Current version: ${updateInfo.currentVersion}\nNew version: ${updateInfo.latestVersion}\n\nWould you like to download it now?`,
+    buttons: ['Download', 'View Release Notes', 'Later'],
+    defaultId: 0,
+    cancelId: 2
+  };
+
+  dialog.showMessageBox(mainWindow, options).then(result => {
+    if (result.response === 0) {
+      // Download - open the release page
+      shell.openExternal(updateInfo.releaseUrl);
+    } else if (result.response === 1) {
+      // View Release Notes
+      if (mainWindow) {
+        mainWindow.webContents.send('show-update-notes', updateInfo);
+      }
+    }
+  });
 }
 
 function repositionWindow(screenId) {
@@ -443,6 +502,22 @@ ipcMain.handle('check-notification-permission', async () => {
   return Notification.isSupported();
 });
 
+ipcMain.handle('check-for-updates', async () => {
+  if (updateChecker) {
+    const updateInfo = await updateChecker.checkForUpdates();
+    if (updateInfo) {
+      pendingUpdate = updateInfo;
+      updateTrayMenu();
+    }
+    return updateInfo;
+  }
+  return null;
+});
+
+ipcMain.on('open-external-link', (event, url) => {
+  shell.openExternal(url);
+});
+
 ipcMain.handle('import-markdown', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     title: 'Import Markdown',
@@ -497,6 +572,32 @@ app.whenReady().then(async () => {
     }
   });
   reminderManager.start();
+  
+  // Initialize update checker
+  updateChecker = new AutoUpdater(mainWindow);
+  updateChecker.start();
+  
+  // Check for updates and notify if available
+  const updateInfo = await updateChecker.checkForUpdates();
+  if (updateInfo) {
+    pendingUpdate = updateInfo;
+    updateTrayMenu();
+    
+    // Show notification about update
+    if (Notification.isSupported()) {
+      const notification = new Notification({
+        title: 'NoteMinder Update Available',
+        body: `Version ${updateInfo.latestVersion} is now available!`,
+        silent: false
+      });
+      
+      notification.on('click', () => {
+        showUpdateDialog(updateInfo);
+      });
+      
+      notification.show();
+    }
+  }
 });
 
 app.on('window-all-closed', () => {
@@ -506,6 +607,9 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   if (reminderManager) {
     reminderManager.stop();
+  }
+  if (updateChecker) {
+    updateChecker.stop();
   }
 });
 

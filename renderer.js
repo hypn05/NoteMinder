@@ -179,6 +179,10 @@ function setupIpcListeners() {
     // Don't reload notes - use current in-memory notes to avoid race conditions
     checkReminders();
   });
+  
+  ipcRenderer.on('show-update-notes', (event, updateInfo) => {
+    showUpdateNotesModal(updateInfo);
+  });
 }
 
 function setupMouseTracking() {
@@ -1069,6 +1073,121 @@ function applyTheme(theme) {
   } else {
     document.body.classList.remove('light-theme');
   }
+}
+
+function showUpdateNotesModal(updateInfo) {
+  const content = document.createElement('div');
+  content.style.maxHeight = '400px';
+  content.style.overflowY = 'auto';
+  
+  // Version info
+  const versionInfo = document.createElement('div');
+  versionInfo.style.padding = '15px';
+  versionInfo.style.backgroundColor = 'var(--bg-secondary)';
+  versionInfo.style.borderRadius = '4px';
+  versionInfo.style.marginBottom = '20px';
+  versionInfo.innerHTML = `
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+      <div>
+        <div style="font-size: 12px; color: var(--text-secondary);">Current Version</div>
+        <div style="font-size: 18px; font-weight: 500;">${updateInfo.currentVersion}</div>
+      </div>
+      <div style="font-size: 24px; color: var(--text-secondary);">→</div>
+      <div>
+        <div style="font-size: 12px; color: var(--text-secondary);">New Version</div>
+        <div style="font-size: 18px; font-weight: 500; color: var(--accent-color);">${updateInfo.latestVersion}</div>
+      </div>
+    </div>
+    <div style="font-size: 12px; color: var(--text-secondary);">
+      Released: ${new Date(updateInfo.publishedAt).toLocaleDateString('en-US', { 
+        year: 'numeric', 
+        month: 'long', 
+        day: 'numeric' 
+      })}
+    </div>
+  `;
+  content.appendChild(versionInfo);
+  
+  // Release notes
+  if (updateInfo.releaseNotes) {
+    const notesTitle = document.createElement('h3');
+    notesTitle.textContent = 'Release Notes';
+    notesTitle.style.fontSize = '14px';
+    notesTitle.style.marginBottom = '10px';
+    notesTitle.style.color = 'var(--text-primary)';
+    content.appendChild(notesTitle);
+    
+    const notesContent = document.createElement('div');
+    notesContent.style.padding = '15px';
+    notesContent.style.backgroundColor = 'var(--bg-secondary)';
+    notesContent.style.borderRadius = '4px';
+    notesContent.style.marginBottom = '20px';
+    notesContent.style.whiteSpace = 'pre-wrap';
+    notesContent.style.fontSize = '13px';
+    notesContent.style.lineHeight = '1.6';
+    notesContent.textContent = updateInfo.releaseNotes;
+    content.appendChild(notesContent);
+  }
+  
+  // Download buttons
+  if (updateInfo.assets && updateInfo.assets.length > 0) {
+    const downloadTitle = document.createElement('h3');
+    downloadTitle.textContent = 'Downloads';
+    downloadTitle.style.fontSize = '14px';
+    downloadTitle.style.marginBottom = '10px';
+    downloadTitle.style.color = 'var(--text-primary)';
+    content.appendChild(downloadTitle);
+    
+    updateInfo.assets.forEach(asset => {
+      const assetBtn = document.createElement('button');
+      assetBtn.className = 'btn btn-primary';
+      assetBtn.style.width = '100%';
+      assetBtn.style.marginBottom = '8px';
+      assetBtn.style.display = 'flex';
+      assetBtn.style.justifyContent = 'space-between';
+      assetBtn.style.alignItems = 'center';
+      
+      const assetName = document.createElement('span');
+      assetName.textContent = asset.name;
+      
+      const assetSize = document.createElement('span');
+      assetSize.style.fontSize = '12px';
+      assetSize.style.opacity = '0.8';
+      assetSize.textContent = formatFileSize(asset.size);
+      
+      assetBtn.appendChild(assetName);
+      assetBtn.appendChild(assetSize);
+      
+      assetBtn.onclick = () => {
+        ipcRenderer.send('open-external-link', asset.downloadUrl);
+        modal.close();
+      };
+      
+      content.appendChild(assetBtn);
+    });
+  }
+  
+  // View on GitHub button
+  const githubBtn = document.createElement('button');
+  githubBtn.className = 'btn';
+  githubBtn.style.width = '100%';
+  githubBtn.style.marginTop = '10px';
+  githubBtn.textContent = 'View on GitHub';
+  githubBtn.onclick = () => {
+    ipcRenderer.send('open-external-link', updateInfo.releaseUrl);
+    modal.close();
+  };
+  content.appendChild(githubBtn);
+  
+  modal.create(`Update Available - v${updateInfo.latestVersion}`, content);
+}
+
+function formatFileSize(bytes) {
+  if (bytes === 0) return '0 Bytes';
+  const k = 1024;
+  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
 }
 
 function showMessage(message, type = 'info') {
