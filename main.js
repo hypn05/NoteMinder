@@ -110,13 +110,11 @@ function createTray() {
   for (const testPath of possiblePaths) {
     if (fs.existsSync(testPath)) {
       iconPath = testPath;
-      console.log('Using tray icon:', iconPath);
       break;
     }
   }
   
   if (!iconPath) {
-    console.error('No tray icon found! Tried paths:', possiblePaths);
     // Create a simple tray without icon as fallback
     iconPath = possiblePaths[0]; // Use first path anyway
   }
@@ -309,41 +307,24 @@ function updateTrayMenu() {
       label: 'Check for Updates',
       click: async () => {
         if (updateChecker) {
-          const updateInfo = await updateChecker.checkForUpdates();
-          if (updateInfo) {
-            pendingUpdate = updateInfo;
-            updateTrayMenu();
-            showUpdateDialog(updateInfo);
-          } else {
-            if (mainWindow) {
-              mainWindow.webContents.send('show-message', {
-                type: 'success',
-                message: 'You are running the latest version!'
-              });
-            }
-          }
+          await updateChecker.checkForUpdates(true);
         }
       }
     },
     {
-      label: 'Test Notification',
+      label: 'About NoteMinder',
       click: () => {
-        if (Notification.isSupported()) {
-          try {
-            const notification = new Notification({
-              title: 'NoteMinder Test',
-              body: 'This is a test notification. If you see this, notifications are working!',
-              silent: false
-            });
-            notification.show();
-          } catch (error) {
-            console.error('Test notification failed:', error);
-          }
-        } else {
-          console.error('Notifications not supported');
-        }
+        const version = require('./package.json').version;
+        dialog.showMessageBox(mainWindow, {
+          type: 'info',
+          title: 'About NoteMinder',
+          message: 'NoteMinder',
+          detail: `Version: ${version}\n\nA desktop note-taking application with collapsible sidebar.\n\n© 2025 NoteMinder`,
+          buttons: ['OK']
+        });
       }
     },
+    { type: 'separator' },
     {
       label: 'Quit',
       click: () => {
@@ -461,7 +442,6 @@ ipcMain.on('set-ignore-mouse', (event, ignore) => {
 ipcMain.on('show-notification', (event, { title, body, noteId }) => {
   // Check if notifications are supported
   if (!Notification.isSupported()) {
-    console.error('Notifications are not supported on this system');
     if (mainWindow) {
       mainWindow.webContents.send('show-message', {
         type: 'error',
@@ -488,7 +468,6 @@ ipcMain.on('show-notification', (event, { title, body, noteId }) => {
     
     notification.show();
   } catch (error) {
-    console.error('Failed to show notification:', error);
     if (mainWindow) {
       mainWindow.webContents.send('show-message', {
         type: 'error',
@@ -504,12 +483,7 @@ ipcMain.handle('check-notification-permission', async () => {
 
 ipcMain.handle('check-for-updates', async () => {
   if (updateChecker) {
-    const updateInfo = await updateChecker.checkForUpdates();
-    if (updateInfo) {
-      pendingUpdate = updateInfo;
-      updateTrayMenu();
-    }
-    return updateInfo;
+    await updateChecker.checkForUpdates(true);
   }
   return null;
 });
@@ -558,9 +532,8 @@ app.whenReady().then(async () => {
           silent: true
         });
         testNotification.show();
-        console.log('Test notification sent to request permissions');
       } catch (error) {
-        console.error('Failed to send test notification:', error);
+        // Silent fail - permissions will be requested when first reminder fires
       }
     }
   }

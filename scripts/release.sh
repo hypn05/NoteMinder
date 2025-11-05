@@ -110,6 +110,8 @@ print_info "Copying builds to release directory..."
 cp dist/*.dmg "$RELEASE_DIR/" 2>/dev/null || true
 cp dist/*.exe "$RELEASE_DIR/" 2>/dev/null || true
 cp dist/*.AppImage "$RELEASE_DIR/" 2>/dev/null || true
+cp dist/*.blockmap "$RELEASE_DIR/" 2>/dev/null || true
+cp dist/latest*.yml "$RELEASE_DIR/" 2>/dev/null || true
 print_success "Builds copied to $RELEASE_DIR"
 
 # Commit version change
@@ -147,6 +149,15 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     echo ""
     print_info "Or use GitHub CLI to create release automatically:"
     echo "  gh release create v$NEW_VERSION $RELEASE_DIR/* --title \"NoteMinder v$NEW_VERSION\" --notes \"Release notes here\""
+    echo ""
+    print_warning "IMPORTANT: Make sure to upload the following files to the GitHub release:"
+    echo "  - All .dmg files (macOS installers)"
+    echo "  - All .exe files (Windows installers)"
+    echo "  - All .AppImage files (Linux installers)"
+    echo "  - All .blockmap files (for delta updates)"
+    echo "  - latest.yml (Windows update metadata)"
+    echo "  - latest-mac.yml (macOS update metadata)"
+    echo "  - latest-linux.yml or latest-linux-arm64.yml (Linux update metadata, if present)"
 else
     print_warning "Changes not pushed. You can push manually later with:"
     echo "  git push origin main"
