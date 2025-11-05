@@ -81,9 +81,13 @@ print_success "Clean complete"
 print_info "Building for all platforms..."
 echo ""
 
-print_info "Building for macOS..."
-npm run build -- --mac
-print_success "macOS build complete"
+print_info "Building for macOS (Intel x64)..."
+npm run build -- --mac --x64
+print_success "macOS Intel build complete"
+
+print_info "Building for macOS (Apple Silicon arm64)..."
+npm run build -- --mac --arm64
+print_success "macOS ARM64 build complete"
 
 print_info "Building for Windows..."
 npm run build -- --win
