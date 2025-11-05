@@ -60,6 +60,23 @@
         "nsis"
       ]
     },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "NoteMinder",
+      "runAfterFinish": true,
+      "installerIcon": "build/icon512x512.png",
+      "uninstallerIcon": "build/icon512x512.png",
+      "license": "LICENSE",
+      "warningsAsErrors": false,
+      "deleteAppDataOnUninstall": false,
+      "displayLanguageSelector": false,
+      "installerLanguages": ["en_US"],
+      "perMachine": false,
+      "allowElevation": true
+    },
     "linux": {
       "icon": "build/icon512x512.png",
       "target": [
