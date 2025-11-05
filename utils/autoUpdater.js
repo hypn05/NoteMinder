@@ -1,0 +1,259 @@
+const { autoUpdater } = require('electron-updater');
+const { dialog, Notification } = require('electron');
+const log = require('electron-log');
+
+class AutoUpdater {
+  constructor(mainWindow) {
+    this.mainWindow = mainWindow;
+    this.updateAvailable = false;
+    this.updateDownloaded = false;
+    
+    // Configure logging
+    log.transports.file.level = 'info';
+    autoUpdater.logger = log;
+    
+    // Configure auto-updater
+    autoUpdater.autoDownload = false; // Don't auto-download, ask user first
+    autoUpdater.autoInstallOnAppQuit = true; // Install when app quits
+    
+    this.setupEventHandlers();
+  }
+  
+  setupEventHandlers() {
+    // Checking for update
+    autoUpdater.on('checking-for-update', () => {
+      log.info('Checking for update...');
+      this.sendStatusToWindow('Checking for updates...');
+    });
+    
+    // Update available
+    autoUpdater.on('update-available', (info) => {
+      log.info('Update available:', info.version);
+      this.updateAvailable = true;
+      this.showUpdateAvailableDialog(info);
+    });
+    
+    // Update not available
+    autoUpdater.on('update-not-available', (info) => {
+      log.info('Update not available. Current version:', info.version);
+      this.updateAvailable = false;
+    });
+    
+    // Error occurred
+    autoUpdater.on('error', (err) => {
+      log.error('Error in auto-updater:', err);
+      this.sendStatusToWindow('Error checking for updates');
+    });
+    
+    // Download progress
+    autoUpdater.on('download-progress', (progressObj) => {
+      const message = `Download speed: ${progressObj.bytesPerSecond} - Downloaded ${progressObj.percent}% (${progressObj.transferred}/${progressObj.total})`;
+      log.info(message);
+      this.sendStatusToWindow(message);
+      
+      // Send progress to renderer
+      if (this.mainWindow) {
+        this.mainWindow.webContents.send('download-progress', {
+          percent: progressObj.percent,
+          transferred: progressObj.transferred,
+          total: progressObj.total,
+          bytesPerSecond: progressObj.bytesPerSecond
+        });
+      }
+    });
+    
+    // Update downloaded
+    autoUpdater.on('update-downloaded', (info) => {
+      log.info('Update downloaded:', info.version);
+      this.updateDownloaded = true;
+      this.showUpdateDownloadedDialog(info);
+    });
+  }
+  
+  showUpdateAvailableDialog(info) {
+    const options = {
+      type: 'info',
+      title: 'Update Available',
+      message: `A new version ${info.version} is available!`,
+      detail: `Current version: ${autoUpdater.currentVersion.version}\nNew version: ${info.version}\n\nRelease date: ${new Date(info.releaseDate).toLocaleDateString()}\n\nWould you like to download it now?`,
+      buttons: ['Download Now', 'View Release Notes', 'Later'],
+      defaultId: 0,
+      cancelId: 2
+    };
+    
+    dialog.showMessageBox(this.mainWindow, options).then(result => {
+      if (result.response === 0) {
+        // Download Now
+        this.downloadUpdate();
+      } else if (result.response === 1) {
+        // View Release Notes
+        if (this.mainWindow) {
+          this.mainWindow.webContents.send('show-release-notes', {
+            version: info.version,
+            releaseNotes: info.releaseNotes,
+            releaseDate: info.releaseDate
+          });
+        }
+        
+        // Ask again after showing notes
+        setTimeout(() => {
+          const followUpOptions = {
+            type: 'question',
+            title: 'Download Update?',
+            message: 'Would you like to download the update now?',
+            buttons: ['Download', 'Later'],
+            defaultId: 0,
+            cancelId: 1
+          };
+          
+          dialog.showMessageBox(this.mainWindow, followUpOptions).then(followUpResult => {
+            if (followUpResult.response === 0) {
+              this.downloadUpdate();
+            }
+          });
+        }, 500);
+      }
+    });
+    
+    // Also show system notification
+    if (Notification.isSupported()) {
+      const notification = new Notification({
+        title: 'NoteMinder Update Available',
+        body: `Version ${info.version} is ready to download!`,
+        silent: false
+      });
+      
+      notification.on('click', () => {
+        this.downloadUpdate();
+      });
+      
+      notification.show();
+    }
+  }
+  
+  showUpdateDownloadedDialog(info) {
+    const options = {
+      type: 'info',
+      title: 'Update Ready',
+      message: `Version ${info.version} has been downloaded!`,
+      detail: 'The update will be installed when you restart the application.\n\nWould you like to restart now?',
+      buttons: ['Restart Now', 'Later'],
+      defaultId: 0,
+      cancelId: 1
+    };
+    
+    dialog.showMessageBox(this.mainWindow, options).then(result => {
+      if (result.response === 0) {
+        // Restart and install
+        autoUpdater.quitAndInstall(false, true);
+      }
+    });
+    
+    // Show system notification
+    if (Notification.isSupported()) {
+      const notification = new Notification({
+        title: 'NoteMinder Update Ready',
+        body: `Version ${info.version} is ready to install. Restart to update.`,
+        silent: false
+      });
+      
+      notification.on('click', () => {
+        autoUpdater.quitAndInstall(false, true);
+      });
+      
+      notification.show();
+    }
+  }
+  
+  downloadUpdate() {
+    log.info('Starting update download...');
+    this.sendStatusToWindow('Downloading update...');
+    
+    // Show download progress notification
+    if (this.mainWindow) {
+      this.mainWindow.webContents.send('update-download-started');
+    }
+    
+    autoUpdater.downloadUpdate();
+  }
+  
+  sendStatusToWindow(text) {
+    log.info(text);
+    if (this.mainWindow) {
+      this.mainWindow.webContents.send('update-status', text);
+    }
+  }
+  
+  // Check for updates manually
+  async checkForUpdates() {
+    try {
+      log.info('Manual update check initiated');
+      const result = await autoUpdater.checkForUpdates();
+      
+      if (!this.updateAvailable) {
+        // No update available, show message
+        if (this.mainWindow) {
+          this.mainWindow.webContents.send('show-message', {
+            type: 'success',
+            message: 'You are running the latest version!'
+          });
+        }
+      }
+      
+      return result;
+    } catch (error) {
+      log.error('Error checking for updates:', error);
+      if (this.mainWindow) {
+        this.mainWindow.webContents.send('show-message', {
+          type: 'error',
+          message: 'Failed to check for updates. Please try again later.'
+        });
+      }
+      return null;
+    }
+  }
+  
+  // Start automatic update checks
+  start() {
+    log.info('Starting auto-updater...');
+    
+    // Check for updates on startup (after a short delay)
+    setTimeout(() => {
+      this.checkForUpdates();
+    }, 3000);
+    
+    // Check for updates every 6 hours
+    this.updateInterval = setInterval(() => {
+      this.checkForUpdates();
+    }, 6 * 60 * 60 * 1000);
+  }
+  
+  // Stop automatic update checks
+  stop() {
+    if (this.updateInterval) {
+      clearInterval(this.updateInterval);
+      this.updateInterval = null;
+    }
+    log.info('Auto-updater stopped');
+  }
+  
+  // Get current update status
+  getStatus() {
+    return {
+      updateAvailable: this.updateAvailable,
+      updateDownloaded: this.updateDownloaded,
+      currentVersion: autoUpdater.currentVersion.version
+    };
+  }
+  
+  // Install update if downloaded
+  installUpdate() {
+    if (this.updateDownloaded) {
+      autoUpdater.quitAndInstall(false, true);
+    } else {
+      log.warn('No update downloaded to install');
+    }
+  }
+}
+
+module.exports = AutoUpdater;
