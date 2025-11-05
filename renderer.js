@@ -25,6 +25,9 @@ const newNoteBtn = document.getElementById('new-note-btn');
 
 // Initialize
 async function init() {
+  // Ensure arrow tab is visible (fix for macOS logout/login issue)
+  ensureArrowTabVisible();
+  
   // Initialize editor
   editor = new Editor(editorElement);
   editor.onChange = saveCurrentNote;
@@ -183,6 +186,25 @@ function setupIpcListeners() {
   ipcRenderer.on('show-update-notes', (event, updateInfo) => {
     showUpdateNotesModal(updateInfo);
   });
+}
+
+function ensureArrowTabVisible() {
+  // Explicitly ensure the arrow tab is visible and properly styled
+  // This fixes an issue where the arrow tab disappears after macOS logout/login
+  if (arrowTab) {
+    arrowTab.style.display = 'flex';
+    arrowTab.style.position = 'fixed';
+    arrowTab.style.left = '0';
+    arrowTab.style.zIndex = '1000';
+    
+    // Ensure the arrow icon is visible
+    const arrowIcon = document.getElementById('arrow-icon');
+    if (arrowIcon) {
+      arrowIcon.style.display = 'block';
+    }
+    
+    console.log('Arrow tab visibility ensured');
+  }
 }
 
 function setupMouseTracking() {
