@@ -168,6 +168,12 @@ function setupIpcListeners() {
     }
   });
   
+  ipcRenderer.on('expand-sidebar', () => {
+    if (isCollapsed) {
+      toggleSidebar();
+    }
+  });
+  
   ipcRenderer.on('open-note', (event, noteId) => {
     const note = notes.find(n => n.id === noteId);
     if (note) {
