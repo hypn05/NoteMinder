@@ -430,6 +430,9 @@ function setupAllDropdowns() {
         },
         'Link': () => {
           if (editor) editor.insertLink();
+        },
+        'Table': () => {
+          if (editor) editor.insertTable();
         }
       }
     },
