@@ -145,7 +145,10 @@ function updateTrayMenu() {
     {
       label: `Update Available (v${pendingUpdate.latestVersion})`,
       click: () => {
-        showUpdateDialog(pendingUpdate);
+        // Trigger the download through AutoUpdater
+        if (updateChecker) {
+          updateChecker.downloadUpdate();
+        }
       }
     },
     { type: 'separator' }
@@ -341,29 +344,6 @@ function updateTrayMenu() {
   tray.setToolTip('NoteMinder');
 }
 
-function showUpdateDialog(updateInfo) {
-  const options = {
-    type: 'info',
-    title: 'Update Available',
-    message: `A new version of NoteMinder is available!`,
-    detail: `Current version: ${updateInfo.currentVersion}\nNew version: ${updateInfo.latestVersion}\n\nWould you like to download it now?`,
-    buttons: ['Download', 'View Release Notes', 'Later'],
-    defaultId: 0,
-    cancelId: 2
-  };
-
-  dialog.showMessageBox(mainWindow, options).then(result => {
-    if (result.response === 0) {
-      // Download - open the release page
-      shell.openExternal(updateInfo.releaseUrl);
-    } else if (result.response === 1) {
-      // View Release Notes
-      if (mainWindow) {
-        mainWindow.webContents.send('show-update-notes', updateInfo);
-      }
-    }
-  });
-}
 
 function repositionWindow(screenId) {
   if (!mainWindow) return;
@@ -558,21 +538,6 @@ app.whenReady().then(async () => {
   if (updateInfo) {
     pendingUpdate = updateInfo;
     updateTrayMenu();
-    
-    // Show notification about update
-    if (Notification.isSupported()) {
-      const notification = new Notification({
-        title: 'NoteMinder Update Available',
-        body: `Version ${updateInfo.latestVersion} is now available!`,
-        silent: false
-      });
-      
-      notification.on('click', () => {
-        showUpdateDialog(updateInfo);
-      });
-      
-      notification.show();
-    }
   }
 });
 
