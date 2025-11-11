@@ -41,12 +41,13 @@ function createWindow() {
   const { width: screenWidth, height: screenHeight } = targetDisplay.workAreaSize;
   const { x: screenX, y: screenY } = targetDisplay.bounds;
   
-  // Calculate 80% of screen height
-  const windowHeight = Math.floor(screenHeight * 0.8);
+  // Start collapsed: 30px width, 80px height (arrow tab size)
+  const collapsedWidth = 30;
+  const collapsedHeight = 80;
   
   mainWindow = new BrowserWindow({
-    width: 30,
-    height: windowHeight,
+    width: collapsedWidth,
+    height: collapsedHeight,
     x: 0,
     y: 0,
     frame: false,
@@ -65,7 +66,10 @@ function createWindow() {
   mainWindow.loadFile('index.html');
   
   // Position window at right edge of screen, centered vertically
-  mainWindow.setPosition(screenX + screenWidth - 30, screenY + Math.floor((screenHeight - windowHeight) / 2));
+  mainWindow.setPosition(
+    screenX + screenWidth - collapsedWidth, 
+    screenY + Math.floor((screenHeight - collapsedHeight) / 2)
+  );
 
   // Set window properties
   mainWindow.setAlwaysOnTop(true, 'floating');
@@ -403,9 +407,8 @@ ipcMain.handle('save-settings', (event, settings) => {
   return true;
 });
 
-ipcMain.on('resize-window', (event, width) => {
+ipcMain.on('resize-window', (event, { width, height }) => {
   if (mainWindow) {
-    const bounds = mainWindow.getBounds();
     const { screen } = require('electron');
     const displays = screen.getAllDisplays();
     
@@ -419,13 +422,13 @@ ipcMain.on('resize-window', (event, width) => {
     const { width: screenWidth, height: screenHeight } = targetDisplay.workAreaSize;
     const { x: screenX, y: screenY } = targetDisplay.bounds;
     
-    // Position window at right edge of screen
+    // Position window at right edge of screen, centered vertically
     mainWindow.setBounds({
       x: screenX + screenWidth - width,
-      y: screenY + Math.floor((screenHeight - bounds.height) / 2),
+      y: screenY + Math.floor((screenHeight - height) / 2),
       width: width,
-      height: bounds.height
-    });
+      height: height
+    }, true); // animate parameter for smooth transition
   }
 });
 
