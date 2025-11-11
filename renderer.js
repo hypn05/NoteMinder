@@ -232,14 +232,16 @@ function toggleSidebar() {
     sidebar.classList.remove('expanded');
     sidebar.classList.add('collapsed');
     arrowTab.classList.remove('expanded');
-    ipcRenderer.send('resize-window', 30);
+    // Collapsed: 30px width, 80px height (arrow tab size)
+    ipcRenderer.send('resize-window', { width: 30, height: 80 });
   } else {
     sidebar.classList.remove('collapsed');
     sidebar.classList.add('expanded');
     arrowTab.classList.add('expanded');
-    // Calculate window width: 30px arrow + 30% of screen for sidebar + 70% for editor
-    // For simplicity, use a fixed expanded width
-    ipcRenderer.send('resize-window', 800);
+    // Expanded: 800px width, 80% of screen height
+    const screenHeight = window.screen.availHeight;
+    const windowHeight = Math.floor(screenHeight * 0.8);
+    ipcRenderer.send('resize-window', { width: 800, height: windowHeight });
   }
   
   ipcRenderer.send('set-collapsed', isCollapsed);

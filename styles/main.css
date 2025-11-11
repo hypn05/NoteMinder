@@ -41,7 +41,7 @@ button, input, textarea, select, a, [contenteditable] {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: all var(--transition-fast);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   z-index: 1000;
   -webkit-app-region: no-drag;
 }
@@ -49,12 +49,13 @@ button, input, textarea, select, a, [contenteditable] {
 #arrow-tab:hover {
   background: rgba(45, 45, 68, 0.9);
   width: 35px;
+  transform: translateY(-50%) scale(1.05);
 }
 
 #arrow-icon {
   font-size: 16px;
   color: var(--text-primary);
-  transition: transform var(--transition-normal);
+  transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 #arrow-tab.expanded #arrow-icon {
@@ -68,10 +69,13 @@ button, input, textarea, select, a, [contenteditable] {
   border-right: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
-  transition: all var(--transition-normal);
+  transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1),
+              min-width 0.4s cubic-bezier(0.4, 0, 0.2, 1),
+              opacity 0.3s ease;
   overflow: hidden;
   width: 0;
   min-width: 0;
+  opacity: 0;
   -webkit-app-region: no-drag;
   margin-left: var(--sidebar-width-collapsed);
 }
@@ -79,6 +83,7 @@ button, input, textarea, select, a, [contenteditable] {
 #sidebar.expanded {
   width: 30%;
   min-width: 250px;
+  opacity: 1;
 }
 
 /* Sidebar content */
@@ -88,13 +93,17 @@ button, input, textarea, select, a, [contenteditable] {
   flex-direction: column;
   opacity: 0;
   pointer-events: none;
-  transition: opacity var(--transition-normal);
+  transition: opacity 0.4s ease 0.4s;
   overflow: hidden;
+  transform: translateX(-10px);
 }
 
 #sidebar.expanded #sidebar-content {
   opacity: 1;
   pointer-events: auto;
+  transform: translateX(0);
+  transition: opacity 0.4s ease 0.15s,
+              transform 0.4s cubic-bezier(0.4, 0, 0.2, 1) 0.15s;
 }
 
 /* Header */
@@ -232,6 +241,7 @@ button, input, textarea, select, a, [contenteditable] {
   backdrop-filter: blur(20px);
   overflow: hidden;
   -webkit-app-region: no-drag;
+  transition: opacity 0.3s ease;
 }
 
 #editor-header {
