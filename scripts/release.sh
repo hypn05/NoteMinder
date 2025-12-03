@@ -158,6 +158,30 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     echo "  - latest.yml (Windows update metadata)"
     echo "  - latest-mac.yml (macOS update metadata)"
     echo "  - latest-linux.yml or latest-linux-arm64.yml (Linux update metadata, if present)"
+    echo ""
+    
+    # Update Homebrew tap if it exists
+    if [ -d "../homebrew-noteminder" ]; then
+        print_info "Updating Homebrew formula..."
+        cd ../homebrew-noteminder
+        
+        # Update version in formula
+        if [ -f "Casks/noteminder.rb" ]; then
+            sed -i '' "s/version \".*\"/version \"$NEW_VERSION\"/" Casks/noteminder.rb
+            
+            git add Casks/noteminder.rb
+            git commit -m "Update NoteMinder to v$NEW_VERSION"
+            git push origin main
+            
+            print_success "Homebrew formula updated to v$NEW_VERSION"
+        else
+            print_warning "Homebrew formula not found at Casks/noteminder.rb"
+        fi
+        cd -
+    else
+        print_info "Homebrew tap not found at ../homebrew-noteminder"
+        print_info "To set up Homebrew distribution, see HOMEBREW_SETUP.md"
+    fi
 else
     print_warning "Changes not pushed. You can push manually later with:"
     echo "  git push origin main"
