@@ -34,7 +34,9 @@
     "files": [
       "main.js",
       "renderer.js",
+      "search-renderer.js",
       "index.html",
+      "search.html",
       "styles/**/*",
       "components/**/*",
       "utils/**/*",

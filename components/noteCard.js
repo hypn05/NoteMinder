@@ -2,6 +2,7 @@
 class NoteCard {
   constructor(note, options = {}) {
     this.note = note;
+    this.options = options;
     this.onClick = options.onClick;
     this.onDelete = options.onDelete;
     this.onSetReminder = options.onSetReminder;
@@ -14,6 +15,13 @@ class NoteCard {
     if (this.isActive) {
       card.classList.add('active');
     }
+    if (this.note.isFavorite) {
+      card.classList.add('favorite');
+    }
+    
+    // Make card draggable
+    card.draggable = true;
+    card.dataset.noteId = this.note.id;
     
     // Calculate text color if background is set
     let textColor = null;
@@ -26,47 +34,89 @@ class NoteCard {
       card.style.color = textColor;
     }
     
+    // Card header with icon and content
+    const cardHeader = document.createElement('div');
+    cardHeader.className = 'note-card-header';
+    
+    // Content area (no icon needed since we have separate tabs)
+    const contentArea = document.createElement('div');
+    contentArea.className = 'note-card-content';
+    
     // Note preview - extract only the first element's text as title
-    const preview = document.createElement('div');
-    preview.className = 'note-preview';
     const tempDiv = document.createElement('div');
     tempDiv.innerHTML = this.note.content;
     
-    // Get only the first child element's text
+    // Remove password field containers before extracting text
+    const passwordFields = tempDiv.querySelectorAll('.password-field-container');
+    passwordFields.forEach(field => field.remove());
+    
+    // Get only the first non-empty child element's text
     let titleText = '';
-    if (tempDiv.firstChild) {
-      titleText = tempDiv.firstChild.textContent?.trim() || '';
-    }
-    
-    if (titleText) {
-      const heading = document.createElement('div');
-      heading.style.fontWeight = 'bold';
-      heading.style.fontSize = '1.1em';
-      heading.textContent = titleText.substring(0, 50) + (titleText.length > 50 ? '...' : '');
-      if (textColor) {
-        heading.style.color = textColor;
-      }
-      preview.appendChild(heading);
-    } else {
-      preview.textContent = 'Empty note';
-      if (textColor) {
-        preview.style.color = textColor;
+    for (const child of tempDiv.childNodes) {
+      if (child.nodeType === Node.TEXT_NODE) {
+        const text = child.textContent?.trim();
+        if (text) {
+          titleText = text;
+          break;
+        }
+      } else if (child.nodeType === Node.ELEMENT_NODE) {
+        const text = child.textContent?.trim();
+        if (text) {
+          titleText = text;
+          break;
+        }
       }
     }
     
-    // Note metadata
-    const meta = document.createElement('div');
-    meta.className = 'note-meta';
-    
-    const dateDiv = document.createElement('div');
-    dateDiv.className = 'note-date';
-    dateDiv.innerHTML = `<span>📅</span> ${this.formatDate(this.note.updated)}`;
+    const preview = document.createElement('div');
+    preview.className = 'note-card-title';
+    preview.textContent = titleText || 'Empty note';
     if (textColor) {
-      dateDiv.style.color = textColor;
+      preview.style.color = textColor;
     }
     
+    // Subtitle with reminder info if available
+    const subtitle = document.createElement('div');
+    subtitle.className = 'note-card-subtitle';
+    if (this.note.reminders && this.note.reminders.length > 0) {
+      const activeReminders = this.note.reminders.filter(r => r.enabled);
+      if (activeReminders.length > 0) {
+        const reminderText = this.formatReminderText(activeReminders[0]);
+        if (reminderText) {
+          subtitle.textContent = `⏰ ${reminderText}`;
+        }
+      }
+    }
+    if (textColor) {
+      subtitle.style.color = textColor;
+      subtitle.style.opacity = '0.7';
+    }
+    
+    contentArea.appendChild(preview);
+    if (subtitle.textContent) {
+      contentArea.appendChild(subtitle);
+    }
+    
+    cardHeader.appendChild(contentArea);
+    
+    // Actions container (shown on hover)
     const actions = document.createElement('div');
-    actions.className = 'note-actions';
+    actions.className = 'note-card-actions';
+    
+    // Favorite button
+    const favoriteBtn = document.createElement('button');
+    favoriteBtn.className = 'note-action-btn';
+    favoriteBtn.innerHTML = this.note.isFavorite ? '⭐' : '☆';
+    favoriteBtn.title = this.note.isFavorite ? 'Remove from favorites' : 'Add to favorites';
+    if (textColor) {
+      favoriteBtn.style.color = textColor;
+    }
+    favoriteBtn.onclick = (e) => {
+      e.stopPropagation();
+      if (this.options && this.options.onToggleFavorite) {
+        this.options.onToggleFavorite(this.note);
+      }
+    };
     
     // Reminder button
     const reminderBtn = document.createElement('button');
@@ -75,7 +125,6 @@ class NoteCard {
     reminderBtn.title = 'Set reminder';
     if (textColor) {
       reminderBtn.style.color = textColor;
-      reminderBtn.style.opacity = '0.8';
     }
     reminderBtn.onclick = (e) => {
       e.stopPropagation();
@@ -91,7 +140,6 @@ class NoteCard {
     deleteBtn.title = 'Delete note';
     if (textColor) {
       deleteBtn.style.color = textColor;
-      deleteBtn.style.opacity = '0.8';
     }
     deleteBtn.onclick = (e) => {
       e.stopPropagation();
@@ -100,37 +148,12 @@ class NoteCard {
       }
     };
     
+    actions.appendChild(favoriteBtn);
     actions.appendChild(reminderBtn);
     actions.appendChild(deleteBtn);
     
-    meta.appendChild(dateDiv);
-    meta.appendChild(actions);
-    
-    card.appendChild(preview);
-    card.appendChild(meta);
-    
-    // Add reminder badges if exist
-    if (this.note.reminders && this.note.reminders.length > 0) {
-      const activeReminders = this.note.reminders.filter(r => r.enabled);
-      if (activeReminders.length > 0) {
-        const remindersContainer = document.createElement('div');
-        remindersContainer.style.marginTop = '8px';
-        remindersContainer.style.display = 'flex';
-        remindersContainer.style.flexDirection = 'column';
-        remindersContainer.style.gap = '4px';
-        
-        activeReminders.forEach(reminder => {
-          const badge = this.createReminderBadge(reminder, textColor);
-          if (badge) {
-            remindersContainer.appendChild(badge);
-          }
-        });
-        
-        if (remindersContainer.children.length > 0) {
-          card.appendChild(remindersContainer);
-        }
-      }
-    }
+    card.appendChild(cardHeader);
+    card.appendChild(actions);
     
     // Click handler
     card.onclick = () => {
@@ -138,6 +161,122 @@ class NoteCard {
         this.onClick(this.note);
       }
     };
+    
+    // Drag and drop handlers
+    let autoScrollInterval = null;
+    
+    card.addEventListener('dragstart', (e) => {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', this.note.id);
+      card.classList.add('dragging');
+      
+      // Add a semi-transparent drag image
+      setTimeout(() => {
+        card.style.opacity = '0.5';
+      }, 0);
+      
+      // Start auto-scroll interval
+      autoScrollInterval = setInterval(() => {
+        const notesContainer = document.getElementById('notes-container');
+        if (!notesContainer) return;
+        
+        const rect = notesContainer.getBoundingClientRect();
+        const mouseY = this.lastMouseY || 0;
+        
+        // Define scroll zones (top and bottom 50px of container)
+        const scrollZone = 50;
+        const scrollSpeed = 5;
+        
+        if (mouseY < rect.top + scrollZone && mouseY > rect.top) {
+          // Scroll up
+          notesContainer.scrollTop -= scrollSpeed;
+        } else if (mouseY > rect.bottom - scrollZone && mouseY < rect.bottom) {
+          // Scroll down
+          notesContainer.scrollTop += scrollSpeed;
+        }
+      }, 16); // ~60fps
+    });
+    
+    card.addEventListener('dragend', (e) => {
+      card.classList.remove('dragging');
+      card.style.opacity = '1';
+      
+      // Clear auto-scroll interval
+      if (autoScrollInterval) {
+        clearInterval(autoScrollInterval);
+        autoScrollInterval = null;
+      }
+      
+      // Remove all drag-over indicators
+      document.querySelectorAll('.note-card').forEach(c => {
+        c.classList.remove('drag-over-top', 'drag-over-bottom');
+      });
+    });
+    
+    // Track mouse position for auto-scroll
+    card.addEventListener('drag', (e) => {
+      if (e.clientY !== 0) {
+        this.lastMouseY = e.clientY;
+      }
+    });
+    
+    card.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'move';
+      
+      // Track mouse position for auto-scroll
+      if (e.clientY !== 0) {
+        this.lastMouseY = e.clientY;
+      }
+      
+      const draggingCard = document.querySelector('.dragging');
+      if (!draggingCard || draggingCard === card) return;
+      
+      // Remove previous indicators
+      document.querySelectorAll('.note-card').forEach(c => {
+        c.classList.remove('drag-over-top', 'drag-over-bottom');
+      });
+      
+      // Determine if we should insert before or after
+      const rect = card.getBoundingClientRect();
+      const midpoint = rect.top + rect.height / 2;
+      
+      if (e.clientY < midpoint) {
+        card.classList.add('drag-over-top');
+      } else {
+        card.classList.add('drag-over-bottom');
+      }
+    });
+    
+    card.addEventListener('dragleave', (e) => {
+      // Only remove if we're actually leaving the card
+      if (e.target === card) {
+        card.classList.remove('drag-over-top', 'drag-over-bottom');
+      }
+    });
+    
+    card.addEventListener('drop', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      
+      const draggedNoteId = e.dataTransfer.getData('text/plain');
+      const targetNoteId = this.note.id;
+      
+      if (draggedNoteId === targetNoteId) return;
+      
+      // Determine drop position
+      const rect = card.getBoundingClientRect();
+      const midpoint = rect.top + rect.height / 2;
+      const insertBefore = e.clientY < midpoint;
+      
+      // Trigger reorder callback
+      if (this.options && this.options.onReorder) {
+        this.options.onReorder(draggedNoteId, targetNoteId, insertBefore);
+      }
+      
+      // Clean up
+      card.classList.remove('drag-over-top', 'drag-over-bottom');
+    });
     
     return card;
   }

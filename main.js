@@ -1,20 +1,30 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu, dialog, Notification, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, dialog, Notification, shell, globalShortcut, systemPreferences } = require('electron');
 const path = require('path');
 const Storage = require('./utils/storage');
 const ReminderManager = require('./utils/reminder');
 const AutoUpdater = require('./utils/autoUpdater');
+const SecurityManager = require('./utils/security');
 
 // Storage instances
 const notesStorage = new Storage('notes.json');
 const settingsStorage = new Storage('settings.json');
+const passwordsStorage = new Storage('passwords.json');
+const securitySettingsStorage = new Storage('security-settings.json');
+const securityManager = new SecurityManager();
 
 let mainWindow = null;
+let searchWindow = null;
 let tray = null;
 let reminderManager = null;
 let updateChecker = null;
 let isCollapsed = true;
 let currentScreenId = null;
 let pendingUpdate = null;
+
+// Authentication session tracking
+let lastAuthTime = null;
+let lastActivityTime = Date.now();
+let authenticationGranted = false;
 
 // Hide dock icon on macOS before app is ready
 if (process.platform === 'darwin') {
@@ -97,6 +107,57 @@ function createWindow() {
   // Track mouse position for click-through
   mainWindow.webContents.on('did-finish-load', () => {
     mainWindow.webContents.send('init-settings', settings);
+  });
+}
+
+function createSearchWindow() {
+  if (searchWindow) {
+    searchWindow.show();
+    searchWindow.focus();
+    searchWindow.webContents.send('focus-search');
+    return;
+  }
+
+  const { screen } = require('electron');
+  const primaryDisplay = screen.getPrimaryDisplay();
+  const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
+  
+  // Create window in center of screen
+  const windowWidth = 600;
+  const windowHeight = 400;
+  
+  searchWindow = new BrowserWindow({
+    width: windowWidth,
+    height: windowHeight,
+    x: Math.floor((screenWidth - windowWidth) / 2),
+    y: Math.floor((screenHeight - windowHeight) / 2) - 100, // Slightly above center
+    frame: false,
+    transparent: true,
+    alwaysOnTop: true,
+    resizable: false,
+    skipTaskbar: true,
+    show: false,
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false
+    }
+  });
+
+  searchWindow.loadFile('search.html');
+  
+  // Show window when ready
+  searchWindow.once('ready-to-show', () => {
+    searchWindow.show();
+    searchWindow.focus();
+  });
+
+  // Hide window when it loses focus
+  searchWindow.on('blur', () => {
+    searchWindow.hide();
+  });
+
+  searchWindow.on('closed', () => {
+    searchWindow = null;
   });
 }
 
@@ -387,6 +448,14 @@ ipcMain.handle('save-settings', (event, settings) => {
   return true;
 });
 
+ipcMain.handle('get-passwords', () => {
+  return passwordsStorage.read() || [];
+});
+
+ipcMain.handle('save-passwords', (event, passwords) => {
+  return passwordsStorage.write(passwords);
+});
+
 ipcMain.on('resize-window', (event, { width, height }) => {
   if (mainWindow) {
     const { screen } = require('electron');
@@ -493,10 +562,172 @@ ipcMain.handle('import-markdown', async () => {
   return { success: false };
 });
 
+// IPC Handlers for search window
+ipcMain.on('open-note-from-search', (event, noteId) => {
+  if (mainWindow) {
+    mainWindow.show();
+    mainWindow.focus();
+    if (isCollapsed) {
+      mainWindow.webContents.send('expand-sidebar');
+    }
+    mainWindow.webContents.send('open-note', noteId);
+  }
+  if (searchWindow) {
+    searchWindow.hide();
+  }
+});
+
+ipcMain.on('close-search-window', () => {
+  if (searchWindow) {
+    searchWindow.hide();
+  }
+});
+
+// Security IPC Handlers
+ipcMain.handle('encrypt-password-entry', async (event, passwordData) => {
+  try {
+    const encrypted = securityManager.encryptPasswordEntry(passwordData);
+    return { success: true, data: encrypted };
+  } catch (error) {
+    console.error('[Security] Encryption failed:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('decrypt-password-entry', async (event, encryptedData) => {
+  try {
+    // Get security settings to check authentication policy
+    const securitySettings = securitySettingsStorage.read() || {
+      authenticationPolicy: 'always',
+      idleTimeout: 300
+    };
+    
+    const now = Date.now();
+    let needsAuth = false;
+    
+    // Determine if authentication is needed based on policy
+    switch (securitySettings.authenticationPolicy) {
+      case 'always':
+        needsAuth = true;
+        break;
+        
+      case 'once_per_session':
+        // Only authenticate once per app session
+        if (!authenticationGranted) {
+          needsAuth = true;
+        }
+        break;
+        
+      case 'after_idle':
+        // Authenticate if idle timeout has passed
+        const idleTimeMs = securitySettings.idleTimeout * 1000;
+        if (!lastAuthTime || (now - lastActivityTime) > idleTimeMs) {
+          needsAuth = true;
+        }
+        break;
+    }
+    
+    // Update activity time
+    lastActivityTime = now;
+    
+    // Perform authentication if needed
+    if (needsAuth && process.platform === 'darwin') {
+      const authResult = await securityManager.verifyAccess();
+      if (!authResult) {
+        return { success: false, error: 'Authentication failed' };
+      }
+      lastAuthTime = now;
+      authenticationGranted = true;
+    }
+    
+    // Decrypt the password entry
+    const decrypted = securityManager.decryptPasswordEntry(encryptedData);
+    return { success: true, data: decrypted };
+  } catch (error) {
+    console.error('[Security] Decryption failed:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('verify-security-access', async () => {
+  try {
+    const hasAccess = await securityManager.verifyAccess();
+    return { success: hasAccess };
+  } catch (error) {
+    console.error('[Security] Access verification failed:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('get-encryption-info', () => {
+  return securityManager.getEncryptionInfo();
+});
+
+ipcMain.handle('generate-password', (event, length, options) => {
+  try {
+    const password = securityManager.generatePassword(length, options);
+    return { success: true, password };
+  } catch (error) {
+    console.error('[Security] Password generation failed:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('request-system-auth', async (event, reason) => {
+  // On macOS, system authentication is handled automatically by safeStorage
+  // This handler is for explicit authentication requests
+  if (process.platform === 'darwin') {
+    try {
+      // Verify access which will trigger Touch ID/password prompt
+      const result = await securityManager.verifyAccess();
+      return { success: result };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  }
+  // For other platforms, assume authentication is handled by the OS
+  return { success: true };
+});
+
+// Security Settings IPC Handlers
+ipcMain.handle('get-security-settings', () => {
+  return securitySettingsStorage.read();
+});
+
+ipcMain.handle('save-security-settings', (event, settings) => {
+  securitySettingsStorage.write(settings);
+  // Reset authentication when settings change
+  authenticationGranted = false;
+  lastAuthTime = null;
+  return true;
+});
+
+// Activity tracking - called from renderer to update last activity time
+ipcMain.on('update-activity', () => {
+  lastActivityTime = Date.now();
+});
+
+// Reset authentication session
+ipcMain.handle('reset-auth-session', () => {
+  authenticationGranted = false;
+  lastAuthTime = null;
+  return true;
+});
+
 // App lifecycle
 app.whenReady().then(async () => {
   createWindow();
   createTray();
+  
+  // Register global shortcut for search
+  const searchShortcut = process.platform === 'darwin' ? 'Command+Shift+Space' : 'Control+Shift+Space';
+  const ret = globalShortcut.register(searchShortcut, () => {
+    createSearchWindow();
+  });
+  
+  if (!ret) {
+    console.error('Global shortcut registration failed');
+  }
   
   // Request notification permissions on macOS
   if (process.platform === 'darwin') {
@@ -546,12 +777,20 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
+  // Unregister all shortcuts
+  globalShortcut.unregisterAll();
+  
   if (reminderManager) {
     reminderManager.stop();
   }
   if (updateChecker) {
     updateChecker.stop();
   }
+});
+
+app.on('will-quit', () => {
+  // Unregister all shortcuts
+  globalShortcut.unregisterAll();
 });
 
 app.on('activate', () => {

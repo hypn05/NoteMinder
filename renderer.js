@@ -2,16 +2,23 @@ const { ipcRenderer } = require('electron');
 const Modal = require('./components/modal');
 const Editor = require('./components/editor');
 const NoteCard = require('./components/noteCard');
+const PasswordCard = require('./components/passwordCard');
+const PasswordModal = require('./components/passwordModal');
+const PasswordManager = require('./utils/passwordManager');
 const ReminderManager = require('./utils/reminder');
 
 // State
 let notes = [];
+let passwords = [];
 let currentNote = null;
+let currentPassword = null;
 let isCollapsed = true;
 let searchQuery = '';
 
 // Components
 let modal = new Modal();
+let passwordModal = new PasswordModal();
+let passwordManager = new PasswordManager();
 let editor = null;
 let reminderManager = null;
 
@@ -32,8 +39,9 @@ async function init() {
   editor = new Editor(editorElement);
   editor.onChange = saveCurrentNote;
   
-  // Load notes
+  // Load notes and passwords
   await loadNotes();
+  await loadPasswords();
   
   // Setup event listeners
   setupEventListeners();
@@ -81,6 +89,28 @@ function setupEventListeners() {
   // New note button
   newNoteBtn.addEventListener('click', createNewNote);
   
+  // New password button
+  const newPasswordBtn = document.getElementById('new-password-btn');
+  if (newPasswordBtn) {
+    newPasswordBtn.addEventListener('click', async () => {
+      const result = await passwordModal.show();
+      if (result && result.action === 'create') {
+        await passwordManager.createPassword(result.data);
+        await loadPasswords();
+        showMessage('Password created', 'success');
+      }
+    });
+  }
+  
+  // Tab switching
+  const tabs = document.querySelectorAll('.sidebar-tab');
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      const tabName = tab.dataset.tab;
+      switchTab(tabName);
+    });
+  });
+  
   // Toolbar buttons
   document.getElementById('btn-bold').addEventListener('click', () => {
     if (editor) editor.execCommand('bold');
@@ -117,6 +147,13 @@ function setupEventListeners() {
   document.getElementById('btn-reminder').addEventListener('click', () => {
     if (currentNote) {
       showReminderModal(currentNote);
+    }
+  });
+  
+  // Password field button
+  document.getElementById('btn-password').addEventListener('click', () => {
+    if (currentNote) {
+      showPasswordModal();
     }
   });
   
@@ -252,12 +289,107 @@ async function loadNotes() {
   renderNotes();
 }
 
+async function loadPasswords() {
+  passwords = await passwordManager.loadPasswords();
+  renderPasswords();
+}
+
+function renderPasswords() {
+  const passwordsContainer = document.getElementById('passwords-container');
+  const passwordsCount = document.getElementById('passwords-count');
+  
+  if (!passwordsContainer || !passwordsCount) return;
+  
+  passwordsContainer.innerHTML = '';
+  passwordsCount.textContent = passwords.length;
+  
+  if (passwords.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty-state';
+    empty.style.padding = 'var(--spacing-md)';
+    empty.innerHTML = `
+      <div class="empty-state-icon" style="font-size: 32px;">🔐</div>
+      <div class="empty-state-text">No passwords yet</div>
+    `;
+    passwordsContainer.appendChild(empty);
+    return;
+  }
+  
+  passwords.forEach(password => {
+    const passwordCard = new PasswordCard(password, {
+      onClick: openPassword,
+      onDelete: deletePassword,
+      onToggleFavorite: togglePasswordFavorite,
+      isActive: currentPassword && currentPassword.id === password.id
+    });
+    passwordsContainer.appendChild(passwordCard.render());
+  });
+}
+
+async function openPassword(password) {
+  currentPassword = password;
+  renderPasswords();
+  
+  const result = await passwordModal.show(password);
+  if (result) {
+    if (result.action === 'delete') {
+      await deletePassword(password);
+    } else if (result.action === 'update') {
+      await passwordManager.updatePassword(result.data);
+      await loadPasswords();
+    }
+  }
+  
+  currentPassword = null;
+  renderPasswords();
+}
+
+async function deletePassword(password) {
+  if (confirm('Delete this password? This action cannot be undone.')) {
+    await passwordManager.deletePassword(password.id);
+    await loadPasswords();
+    showMessage('Password deleted', 'success');
+  }
+}
+
+async function togglePasswordFavorite(password) {
+  password.isFavorite = !password.isFavorite;
+  await passwordManager.updatePassword(password);
+  await loadPasswords();
+}
+
 async function saveNotes() {
   await ipcRenderer.invoke('save-notes', notes);
 }
 
+function switchTab(tabName) {
+  // Update tab buttons
+  document.querySelectorAll('.sidebar-tab').forEach(tab => {
+    if (tab.dataset.tab === tabName) {
+      tab.classList.add('active');
+    } else {
+      tab.classList.remove('active');
+    }
+  });
+  
+  // Update tab content
+  document.querySelectorAll('.tab-content').forEach(content => {
+    if (content.dataset.content === tabName) {
+      content.classList.add('active');
+    } else {
+      content.classList.remove('active');
+    }
+  });
+}
+
 function renderNotes() {
   notesContainer.innerHTML = '';
+  
+  // Update notes count
+  const notesCount = document.getElementById('notes-count');
+  if (notesCount) {
+    notesCount.textContent = notes.length;
+  }
   
   let filteredNotes = notes;
   if (searchQuery) {
@@ -266,6 +398,17 @@ function renderNotes() {
       return content.includes(searchQuery.toLowerCase());
     });
   }
+  
+  // Sort notes: favorites first, then by updated date
+  filteredNotes.sort((a, b) => {
+    // If one is favorite and the other isn't, favorite comes first
+    if (a.isFavorite && !b.isFavorite) return -1;
+    if (!a.isFavorite && b.isFavorite) return 1;
+    
+    // If both are favorites or both are not, maintain current order
+    // (order is already set by user's drag and drop)
+    return 0;
+  });
   
   if (filteredNotes.length === 0) {
     const empty = document.createElement('div');
@@ -283,10 +426,57 @@ function renderNotes() {
       onClick: openNote,
       onDelete: deleteNote,
       onSetReminder: showReminderModal,
+      onReorder: reorderNotes,
+      onToggleFavorite: toggleNoteFavorite,
       isActive: currentNote && currentNote.id === note.id
     });
     notesContainer.appendChild(noteCard.render());
   });
+}
+
+function toggleNoteFavorite(note) {
+  note.isFavorite = !note.isFavorite;
+  saveNotes();
+  renderNotes();
+}
+
+function reorderNotes(draggedNoteId, targetNoteId, insertBefore) {
+  // Find the indices of the dragged and target notes
+  const draggedIndex = notes.findIndex(n => n.id === draggedNoteId);
+  const targetIndex = notes.findIndex(n => n.id === targetNoteId);
+  
+  if (draggedIndex === -1 || targetIndex === -1) return;
+  
+  const draggedNote = notes[draggedIndex];
+  const targetNote = notes[targetIndex];
+  
+  // Prevent moving non-favorite notes above favorite notes
+  // and favorite notes below non-favorite notes
+  if (draggedNote.isFavorite && !targetNote.isFavorite) {
+    // Can't move favorite below non-favorite
+    if (!insertBefore) return;
+  }
+  if (!draggedNote.isFavorite && targetNote.isFavorite) {
+    // Can't move non-favorite above favorite
+    if (insertBefore) return;
+  }
+  
+  // Remove the dragged note from its current position
+  notes.splice(draggedIndex, 1);
+  
+  // Calculate the new index
+  let newIndex = notes.findIndex(n => n.id === targetNoteId);
+  
+  // Insert at the appropriate position
+  if (insertBefore) {
+    notes.splice(newIndex, 0, draggedNote);
+  } else {
+    notes.splice(newIndex + 1, 0, draggedNote);
+  }
+  
+  // Save and re-render
+  saveNotes();
+  renderNotes();
 }
 
 function createNewNote() {
@@ -597,6 +787,188 @@ function showColorPicker() {
   content.appendChild(clearOption);
   
   modal.create('Choose Background Color', content);
+}
+
+function showPasswordModal() {
+  const PasswordField = require('./components/passwordField');
+  
+  const content = document.createElement('div');
+  content.style.maxWidth = '500px';
+  
+  const form = document.createElement('form');
+  form.innerHTML = `
+    <div class="form-group">
+      <label class="form-label">Label *</label>
+      <input type="text" id="pwd-label" class="input" placeholder="e.g., Gmail Account" required>
+    </div>
+    
+    <div class="form-group">
+      <label class="form-label">Username/Email</label>
+      <input type="text" id="pwd-username" class="input" placeholder="username@example.com">
+    </div>
+    
+    <div class="form-group">
+      <label class="form-label">Password *</label>
+      <div style="display: flex; gap: 8px;">
+        <input type="password" id="pwd-password" class="input" placeholder="Enter password" required style="flex: 1;">
+        <button type="button" id="toggle-pwd-visibility" class="btn" style="padding: 8px 12px;">👁️</button>
+        <button type="button" id="generate-pwd" class="btn" style="padding: 8px 12px;">🎲</button>
+      </div>
+      <div id="password-strength" style="margin-top: 8px; font-size: 12px;"></div>
+    </div>
+    
+    <div class="form-group">
+      <label class="form-label">Description</label>
+      <textarea id="pwd-description" class="input" placeholder="Optional notes about this password" rows="2"></textarea>
+    </div>
+    
+    <div style="display: flex; gap: 10px;">
+      <button type="submit" class="btn btn-primary" style="flex: 1;">Add Password Field</button>
+      <button type="button" id="cancel-pwd" class="btn" style="padding: 8px 16px;">Cancel</button>
+    </div>
+  `;
+  
+  const passwordInput = form.querySelector('#pwd-password');
+  const toggleBtn = form.querySelector('#toggle-pwd-visibility');
+  const generateBtn = form.querySelector('#generate-pwd');
+  const strengthDiv = form.querySelector('#password-strength');
+  const cancelBtn = form.querySelector('#cancel-pwd');
+  
+  // Toggle password visibility
+  toggleBtn.addEventListener('click', () => {
+    if (passwordInput.type === 'password') {
+      passwordInput.type = 'text';
+      toggleBtn.textContent = '👁️‍🗨️';
+    } else {
+      passwordInput.type = 'password';
+      toggleBtn.textContent = '👁️';
+    }
+  });
+  
+  // Generate password
+  generateBtn.addEventListener('click', async () => {
+    const result = await ipcRenderer.invoke('generate-password', 16, {
+      uppercase: true,
+      lowercase: true,
+      numbers: true,
+      symbols: true
+    });
+    
+    if (result.success) {
+      passwordInput.value = result.password;
+      passwordInput.type = 'text';
+      toggleBtn.textContent = '👁️‍🗨️';
+      updatePasswordStrength(result.password);
+    }
+  });
+  
+  // Password strength indicator
+  function updatePasswordStrength(password) {
+    if (!password) {
+      strengthDiv.textContent = '';
+      strengthDiv.style.color = '';
+      return;
+    }
+    
+    let strength = 0;
+    let feedback = [];
+    
+    // Length check
+    if (password.length >= 12) strength += 2;
+    else if (password.length >= 8) strength += 1;
+    else feedback.push('Use at least 8 characters');
+    
+    // Character variety
+    if (/[a-z]/.test(password)) strength += 1;
+    if (/[A-Z]/.test(password)) strength += 1;
+    if (/[0-9]/.test(password)) strength += 1;
+    if (/[^a-zA-Z0-9]/.test(password)) strength += 1;
+    
+    if (!/[a-z]/.test(password)) feedback.push('Add lowercase letters');
+    if (!/[A-Z]/.test(password)) feedback.push('Add uppercase letters');
+    if (!/[0-9]/.test(password)) feedback.push('Add numbers');
+    if (!/[^a-zA-Z0-9]/.test(password)) feedback.push('Add symbols');
+    
+    let strengthText = '';
+    let color = '';
+    
+    if (strength >= 5) {
+      strengthText = '🟢 Strong password';
+      color = '#4caf50';
+    } else if (strength >= 3) {
+      strengthText = '🟡 Moderate password';
+      color = '#ff9800';
+    } else {
+      strengthText = '🔴 Weak password';
+      color = '#f44336';
+    }
+    
+    if (feedback.length > 0) {
+      strengthText += ' - ' + feedback.join(', ');
+    }
+    
+    strengthDiv.textContent = strengthText;
+    strengthDiv.style.color = color;
+  }
+  
+  passwordInput.addEventListener('input', (e) => {
+    updatePasswordStrength(e.target.value);
+  });
+  
+  cancelBtn.addEventListener('click', () => {
+    modal.close();
+  });
+  
+  form.onsubmit = async (e) => {
+    e.preventDefault();
+    
+    const passwordData = {
+      label: form.querySelector('#pwd-label').value,
+      username: form.querySelector('#pwd-username').value,
+      password: form.querySelector('#pwd-password').value,
+      description: form.querySelector('#pwd-description').value
+    };
+    
+    try {
+      const passwordField = new PasswordField(passwordData);
+      const passwordElement = passwordField.render();
+      
+      // Insert into editor
+      const selection = window.getSelection();
+      const range = selection.getRangeCount > 0 ? selection.getRangeAt(0) : null;
+      
+      if (range) {
+        range.deleteContents();
+        range.insertNode(passwordElement);
+        
+        // Move cursor after the password field
+        const newRange = document.createRange();
+        newRange.setStartAfter(passwordElement);
+        newRange.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(newRange);
+      } else {
+        editorElement.appendChild(passwordElement);
+      }
+      
+      // Save the note
+      saveCurrentNote();
+      
+      modal.close();
+      showMessage('Password field added (will be encrypted on save)', 'success');
+    } catch (error) {
+      console.error('Error adding password field:', error);
+      showMessage('Failed to add password field', 'error');
+    }
+  };
+  
+  content.appendChild(form);
+  modal.create('Add Password Field', content);
+  
+  // Focus the label input
+  setTimeout(() => {
+    form.querySelector('#pwd-label').focus();
+  }, 100);
 }
 
 function showReminderModal(note) {

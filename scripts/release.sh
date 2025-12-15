@@ -160,6 +160,33 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     echo "  - latest-linux.yml or latest-linux-arm64.yml (Linux update metadata, if present)"
     echo ""
     
+    # Create GitHub release automatically
+    print_info "Creating GitHub release..."
+    
+    # Get commit messages since last tag for release notes
+    LAST_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+    if [ -z "$LAST_TAG" ]; then
+        # If no previous tag, get all commits
+        RELEASE_NOTES=$(git log --pretty=format:"- %s" --reverse)
+    else
+        # Get commits since last tag
+        RELEASE_NOTES=$(git log ${LAST_TAG}..HEAD --pretty=format:"- %s" --reverse | grep -v "chore: bump version")
+    fi
+    
+    # Create release with gh CLI
+    if command -v gh &> /dev/null; then
+        gh release create "v$NEW_VERSION" "$RELEASE_DIR"/* \
+            --title "NoteMinder v$NEW_VERSION" \
+            --notes "$RELEASE_NOTES" \
+            --verify-tag
+        print_success "GitHub release v$NEW_VERSION created with commit messages"
+    else
+        print_warning "GitHub CLI (gh) not found. Please install it or create the release manually:"
+        echo "  gh release create v$NEW_VERSION $RELEASE_DIR/* --title \"NoteMinder v$NEW_VERSION\" --notes \"$RELEASE_NOTES\""
+    fi
+    
+    echo ""
+    
     # Update Homebrew tap if it exists
     if [ -d "../homebrew-noteminder" ]; then
         print_info "Updating Homebrew formula..."

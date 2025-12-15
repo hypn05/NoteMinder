@@ -45,14 +45,39 @@
             >
           </div>
           
-          <!-- New Note Button -->
-          <button id="new-note-btn" class="btn btn-primary" style="width: 100%; margin-top: 8px;">
-            ➕ New Note
-          </button>
+          <!-- Tabs -->
+          <div class="sidebar-tabs">
+            <button class="sidebar-tab active" data-tab="notes">
+              <span class="tab-icon">📝</span>
+              <span class="tab-label">Notes</span>
+              <span class="tab-count" id="notes-count">0</span>
+            </button>
+            <button class="sidebar-tab" data-tab="passwords">
+              <span class="tab-icon">🔐</span>
+              <span class="tab-label">Passwords</span>
+              <span class="tab-count" id="passwords-count">0</span>
+            </button>
+          </div>
         </div>
         
-        <!-- Notes List -->
-        <div id="notes-container"></div>
+        <!-- Tab Content Container -->
+        <div class="tab-content-container">
+          <!-- Notes Tab -->
+          <div class="tab-content active" data-content="notes">
+            <button id="new-note-btn" class="new-item-btn">
+              ➕ New Note
+            </button>
+            <div id="notes-container"></div>
+          </div>
+          
+          <!-- Passwords Tab -->
+          <div class="tab-content" data-content="passwords">
+            <button id="new-password-btn" class="new-item-btn">
+              🔐 New Password
+            </button>
+            <div id="passwords-container"></div>
+          </div>
+        </div>
       </div>
     </div>
     
@@ -122,6 +147,13 @@
         <div class="toolbar-group">
           <button id="btn-image" class="btn btn-icon" title="Insert Image">
             🖼️
+          </button>
+        </div>
+        
+        <!-- Password Group -->
+        <div class="toolbar-group">
+          <button id="btn-password" class="btn btn-icon" title="Add Password Field">
+            🔐
           </button>
         </div>
       </div>
