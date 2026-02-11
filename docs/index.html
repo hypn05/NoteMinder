@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NoteMinder — Minimal Notes + Smart Reminders</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: Arial, sans-serif;
+      background: #fff;
+      color: #333;
+    }
+    header {
+      background: #4c6ef5;
+      color: white;
+      text-align: center;
+      padding: 80px 20px;
+    }
+    header h1 {
+      margin: 0;
+      font-size: 3rem;
+    }
+    header p {
+      font-size: 1.25rem;
+      margin-top: 10px;
+    }
+    .container {
+      max-width: 900px;
+      margin: 40px auto;
+      padding: 0 20px;
+    }
+    .grid {
+      display: grid;
+      gap: 24px;
+    }
+    .features {
+      grid-template-columns: 1fr;
+    }
+    .feature {
+      padding: 20px;
+      border-radius: 8px;
+      border: 1px solid #ddd;
+    }
+    .feature h3 {
+      margin-top: 0;
+      color: #4c6ef5;
+    }
+    .screenshots {
+      text-align: center;
+    }
+    .screenshots img {
+      max-width: 100%;
+      border-radius: 8px;
+      margin: 12px 0;
+    }
+    .section-title {
+      text-align: center;
+      margin-bottom: 20px;
+      color: #4c6ef5;
+      font-size: 1.75rem;
+    }
+    footer {
+      background: #f8f9fa;
+      text-align: center;
+      padding: 20px;
+      border-top: 1px solid #ddd;
+      font-size: .9rem;
+    }
+    a.download-btn {
+      display: inline-block;
+      margin: 8px;
+      padding: 12px 24px;
+      background: #4c6ef5;
+      color: white;
+      border-radius: 6px;
+      text-decoration: none;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>NoteMinder</h1>
+  <p>A sleek note app with rich text & smart reminders</p>
+</header>
+
+<div class="container">
+
+  <section>
+    <h2 class="section-title">Features</h2>
+    <div class="grid features">
+      <div class="feature">
+        <h3>Rich Text Notes</h3>
+        Write, format, and organize your text with full rich text support.
+      </div>
+      <div class="feature">
+        <h3>Edge Docked</h3>
+        Stay on the edge of your screen for quick access anytime.
+      </div>
+      <div class="feature">
+        <h3>Smart Reminders</h3>
+        Schedule one-time, daily, or weekly alerts.
+      </div>
+      <div class="feature">
+        <h3>Color Coding</h3>
+        Assign colors to notes to organize visually.
+      </div>
+      <div class="feature">
+        <h3>Search & Export</h3>
+        Find notes fast & export them when you need to.
+      </div>
+      <div class="feature">
+        <h3>Cross-Platform</h3>
+        Available for macOS, Windows, and Linux.
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <h2 class="section-title">Download</h2>
+    <p>Get the latest release (v1.1.6)</p>
+    <a class="download-btn"
+       href="https://github.com/hypn05/NoteMinder/releases/download/v1.1.6/NoteMinder-Setup-1.1.6.exe">
+       Windows Installer
+    </a>
+    <a class="download-btn"
+       href="https://github.com/hypn05/NoteMinder/releases/download/v1.1.6/NoteMinder-1.1.6.AppImage">
+       Linux AppImage
+    </a>
+    <a class="download-btn"
+       href="https://github.com/hypn05/NoteMinder/releases/download/v1.1.6/NoteMinder-1.1.6.dmg">
+       macOS DMG
+    </a>
+  </section>
+
+  <section>
+    <h2 class="section-title">How to Use</h2>
+    <ul>
+      <li><strong>New Note:</strong> Click the “➕ New Note” button.</li>
+      <li><strong>Edit:</strong> Click a note to modify.</li>
+      <li><strong>Delete:</strong> Hover and click the trash icon.</li>
+      <li><strong>Search:</strong> Use the search bar to filter.</li>
+      <li><strong>Reminders:</strong> Click ⏰ on a note to set alerts.</li>
+    </ul>
+  </section>
+    <section>
+    <h2 class="section-title">Screenshots</h2>
+    <div class="screenshots">
+      <img src="images/UI.png" alt="Main UI of NoteMinder">
+      <img src="images/Checklist.png" alt="Checklist view in NoteMinder">
+      <img src="images/Set reminder.png" alt="Setting a reminder">
+      <img src="images/Image support.png" alt="Image support in a note">
+    </div>
+  </section>
+
+</div>
+
+<footer>
+  NoteMinder is open-source and MIT licensed.  
+  View on GitHub:
+  <a href="https://github.com/hypn05/NoteMinder">github.com/hypn05/NoteMinder</a>
+</footer>
+
+</body>
+</html>
