@@ -96,6 +96,7 @@ function setupEventListeners() {
     toggleSidebar();
   });
   setupTabDragging();
+  setupWidthDragging();
 
   // Search
   searchInput.addEventListener('input', handleSearch);
@@ -139,54 +140,21 @@ function setupEventListeners() {
     });
   });
   
-  // Toolbar buttons
-  document.getElementById('btn-bold').addEventListener('click', () => {
-    if (editor) editor.execCommand('bold');
-  });
-  document.getElementById('btn-italic').addEventListener('click', () => {
-    if (editor) editor.execCommand('italic');
-  });
-  document.getElementById('btn-underline').addEventListener('click', () => {
-    if (editor) editor.execCommand('underline');
-  });
-  
-  // Setup all dropdowns
+  // Setup all dropdowns (includes the consolidated Insert menu)
   setupAllDropdowns();
-  
-  // Image upload
-  document.getElementById('btn-image').addEventListener('click', () => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = 'image/*';
-    input.onchange = async (e) => {
-      const file = e.target.files[0];
-      if (file) {
-        await editor.insertImage(file);
-        saveCurrentNote();
-      }
-    };
-    input.click();
-  });
-  
+
+  // Floating formatting toolbar that appears near selected text
+  setupFormatToolbar();
+
   // Color picker
   document.getElementById('btn-color').addEventListener('click', showColorPicker);
-  
+
   // Reminder button
   document.getElementById('btn-reminder').addEventListener('click', () => {
     if (currentNote) {
       showReminderModal(currentNote);
     }
   });
-  
-  // Password field button
-  document.getElementById('btn-password').addEventListener('click', () => {
-    if (currentNote) {
-      showPasswordModal();
-    }
-  });
-  
-  // Import markdown
-  document.getElementById('btn-import-md').addEventListener('click', importMarkdown);
 
   // Search button (alternative to ⌘⇧Space)
   const btnSearch = document.getElementById('btn-search');
@@ -376,6 +344,12 @@ function setupMouseTracking() {
   });
 }
 
+// Movement (in CSS px) past which a mousedown+mouseup on the tab counts as
+// a drag rather than a click. Needs to be forgiving enough that ordinary
+// trackpad/mouse jitter during a click doesn't get misread as a drag and
+// swallow the click (which would make the tab seem to stop responding).
+const DRAG_THRESHOLD = 8;
+
 function setupTabDragging() {
   let dragOrigin = null;
 
@@ -389,7 +363,7 @@ function setupTabDragging() {
     if (!dragOrigin) return;
     const dx = e.screenX - dragOrigin.x;
     const dy = e.screenY - dragOrigin.y;
-    if (!tabDragMoved && Math.hypot(dx, dy) < 4) return;
+    if (!tabDragMoved && Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
     tabDragMoved = true;
     ipcRenderer.send('tab-drag-move', { dx, dy });
     dragOrigin = { x: e.screenX, y: e.screenY };
@@ -402,10 +376,51 @@ function setupTabDragging() {
     }
     dragOrigin = null;
   });
+
+  // Defensive cleanup: if the window loses focus mid-drag (mouse released
+  // outside the window, or the OS steals focus), we'd otherwise never get
+  // the mouseup and could be left with stuck drag state.
+  window.addEventListener('blur', () => {
+    if (dragOrigin && tabDragMoved) {
+      ipcRenderer.send('tab-drag-end');
+    }
+    dragOrigin = null;
+  });
+}
+
+function setupWidthDragging() {
+  const handle = document.getElementById('resize-handle');
+  if (!handle) return;
+  let dragStartX = null;
+
+  handle.addEventListener('mousedown', (e) => {
+    dragStartX = e.screenX;
+    ipcRenderer.send('width-drag-start');
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (dragStartX === null) return;
+    ipcRenderer.send('width-drag-move', { dx: e.screenX - dragStartX });
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (dragStartX === null) return;
+    dragStartX = null;
+    ipcRenderer.send('width-drag-end');
+  });
+
+  window.addEventListener('blur', () => {
+    if (dragStartX !== null) {
+      ipcRenderer.send('width-drag-end');
+    }
+    dragStartX = null;
+  });
 }
 
 function applyEdge(edge) {
   arrowTab.classList.toggle('left-edge', edge === 'left');
+  document.body.classList.toggle('left-edge', edge === 'left');
 }
 
 function toggleSidebar() {
@@ -420,12 +435,14 @@ function toggleSidebar() {
     sidebar.classList.remove('expanded');
     sidebar.classList.add('collapsed');
     arrowTab.classList.remove('expanded');
+    document.body.classList.remove('expanded');
     // Collapsed: 30px width, 80px height (arrow tab size)
     ipcRenderer.send('resize-window', { width: 30, height: 80 });
   } else {
     sidebar.classList.remove('collapsed');
     sidebar.classList.add('expanded');
     arrowTab.classList.add('expanded');
+    document.body.classList.add('expanded');
     ipcRenderer.send('resize-window', { width: expandedSize.width, height: expandedSize.height });
   }
 }
@@ -614,7 +631,7 @@ function switchTab(tabName) {
       tab.classList.remove('active');
     }
   });
-  
+
   // Update tab content
   document.querySelectorAll('.tab-content').forEach(content => {
     if (content.dataset.content === tabName) {
@@ -623,6 +640,10 @@ function switchTab(tabName) {
       content.classList.remove('active');
     }
   });
+
+  // Passwords/Clips have no use for the note editor column, so let the
+  // sidebar take the full window instead of leaving it empty.
+  document.getElementById('app').classList.toggle('wide-mode', tabName !== 'notes');
 }
 
 function renderNotes() {
@@ -1045,50 +1066,78 @@ function handleSearch(e) {
   renderNotes();
 }
 
+function setupFormatToolbar() {
+  const toolbar = document.getElementById('format-toolbar');
+  if (!toolbar) return;
+
+  function updatePosition() {
+    if (isCollapsed) {
+      toolbar.classList.add('hidden');
+      return;
+    }
+
+    const selection = window.getSelection();
+    if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+      toolbar.classList.add('hidden');
+      return;
+    }
+
+    const range = selection.getRangeAt(0);
+    if (!editorElement.contains(range.commonAncestorContainer)) {
+      toolbar.classList.add('hidden');
+      return;
+    }
+
+    const rect = range.getBoundingClientRect();
+    if (rect.width === 0 && rect.height === 0) {
+      toolbar.classList.add('hidden');
+      return;
+    }
+
+    toolbar.classList.remove('hidden');
+    const toolbarRect = toolbar.getBoundingClientRect();
+    let top = rect.top - toolbarRect.height - 8;
+    if (top < 4) {
+      top = rect.bottom + 8; // not enough room above; show below instead
+    }
+    let left = rect.left + rect.width / 2 - toolbarRect.width / 2;
+    left = Math.max(4, Math.min(left, window.innerWidth - toolbarRect.width - 4));
+
+    toolbar.style.top = `${top}px`;
+    toolbar.style.left = `${left}px`;
+  }
+
+  document.addEventListener('selectionchange', updatePosition);
+  editorElement.addEventListener('blur', () => toolbar.classList.add('hidden'));
+
+  // Use mousedown (not click) with preventDefault so the text selection
+  // survives the click on the button — same technique the dropdown menus use.
+  toolbar.addEventListener('mousedown', (e) => {
+    const btn = e.target.closest('.format-btn');
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (!editor) return;
+
+    if (btn.dataset.cmd) {
+      editor.execCommand(btn.dataset.cmd);
+    } else if (btn.dataset.heading) {
+      editor.insertHeading(parseInt(btn.dataset.heading, 10));
+    } else if (btn.dataset.action === 'code') {
+      editor.insertCode();
+    } else if (btn.dataset.action === 'link') {
+      editor.insertLink();
+    }
+  });
+}
+
 function setupAllDropdowns() {
   // Store the selection when dropdown button is clicked
   let savedSelection = null;
   
   const dropdowns = [
     {
-      buttonId: 'heading-dropdown',
-      items: {
-        'Normal text': () => {
-          if (editor) editor.clearBlockFormat();
-        },
-        'H1': () => {
-          if (editor) editor.insertHeading(1);
-        },
-        'H2': () => {
-          if (editor) editor.insertHeading(2);
-        },
-        'H3': () => {
-          if (editor) editor.insertHeading(3);
-        }
-      }
-    },
-    {
-      buttonId: 'insert-dropdown',
-      items: {
-        'Code': () => {
-          if (editor) editor.insertCode();
-        },
-        'Code Block': () => {
-          if (editor) editor.insertCodeBlock();
-        },
-        'Blockquote': () => {
-          if (editor) editor.insertBlockquote();
-        },
-        'Link': () => {
-          if (editor) editor.insertLink();
-        },
-        'Table': () => {
-          if (editor) editor.insertTable();
-        }
-      }
-    },
-    {
-      buttonId: 'list-dropdown',
+      buttonId: 'insert-menu-dropdown',
       items: {
         'Bullet List': () => {
           if (editor) editor.insertList('bullet');
@@ -1098,6 +1147,37 @@ function setupAllDropdowns() {
         },
         'Task List': () => {
           if (editor) editor.insertTaskList();
+        },
+        'Blockquote': () => {
+          if (editor) editor.insertBlockquote();
+        },
+        'Code Block': () => {
+          if (editor) editor.insertCodeBlock();
+        },
+        'Table': () => {
+          if (editor) editor.insertTable();
+        },
+        'Image': () => {
+          const input = document.createElement('input');
+          input.type = 'file';
+          input.accept = 'image/*';
+          input.onchange = async (e) => {
+            const file = e.target.files[0];
+            if (file) {
+              await editor.insertImage(file);
+              saveCurrentNote();
+            }
+          };
+          input.click();
+        },
+        'Password Field': () => {
+          if (currentNote) showPasswordModal();
+        },
+        'Import Markdown': () => {
+          importMarkdown();
+        },
+        'Clear Formatting': () => {
+          if (editor) editor.clearBlockFormat();
         }
       }
     }

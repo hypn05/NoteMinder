@@ -28,6 +28,7 @@ let currentEdge = 'right';
 let tabYRatio = 0.5;
 let dragStartBounds = null;
 let isDraggingTab = false;
+let widthDragStart = null;
 
 // Authentication session tracking
 let lastAuthTime = null;
@@ -608,6 +609,40 @@ ipcMain.on('tab-drag-end', () => {
   settings.screenId = currentScreenId;
   settingsStorage.write(settings);
   updateTrayMenu();
+});
+
+// Custom horizontal resize: native edge-resize on this transparent frameless
+// window is unreliable on macOS (drags on the left/right border are
+// inconsistently hit-tested), so width changes are driven manually here,
+// the same way tab dragging is.
+ipcMain.on('width-drag-start', () => {
+  if (mainWindow) {
+    widthDragStart = { bounds: mainWindow.getBounds(), edge: currentEdge };
+  }
+});
+
+ipcMain.on('width-drag-move', (event, { dx }) => {
+  if (!mainWindow || !widthDragStart) return;
+
+  const displays = screen.getAllDisplays();
+  let targetDisplay = displays.find(d => d.id === currentScreenId);
+  if (!targetDisplay) {
+    targetDisplay = screen.getPrimaryDisplay();
+    currentScreenId = targetDisplay.id;
+  }
+
+  const { bounds, edge } = widthDragStart;
+  let newWidth = edge === 'left' ? bounds.width + dx : bounds.width - dx;
+  const maxWidth = targetDisplay.workAreaSize.width - 40;
+  newWidth = Math.max(500, Math.min(newWidth, maxWidth));
+
+  mainWindow.setBounds(
+    computeSnappedBounds(newWidth, bounds.height, edge, tabYRatio, targetDisplay)
+  );
+});
+
+ipcMain.on('width-drag-end', () => {
+  widthDragStart = null;
 });
 
 ipcMain.on('show-notification', (event, { title, body, noteId }) => {

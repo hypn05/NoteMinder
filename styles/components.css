@@ -259,30 +259,6 @@
   margin: var(--spacing-md) 0;
 }
 
-/* Toolbar component */
-.toolbar {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  padding: var(--spacing-sm);
-  background: var(--bg-tertiary);
-  border-radius: var(--radius-md);
-  flex-wrap: wrap;
-}
-
-.toolbar-group {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-xs);
-  padding-right: var(--spacing-sm);
-  border-right: 1px solid var(--border-color);
-}
-
-.toolbar-group:last-child {
-  border-right: none;
-  padding-right: 0;
-}
-
 /* Drag and drop styles */
 .note-card.dragging {
   opacity: 0.5;
@@ -796,6 +772,8 @@
   align-items: center;
   gap: 12px;
   margin-bottom: 0;
+  min-width: 0;
+  width: 100%;
 }
 
 .password-card-icon {

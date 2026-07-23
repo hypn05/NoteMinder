@@ -42,6 +42,15 @@ function setupEventListeners() {
   // Keyboard navigation
   searchInput.addEventListener('keydown', handleKeyDown);
 
+  // Escape should close the window regardless of what has focus (e.g. after
+  // clicking a result item moved focus away from the input), not just when
+  // the search input itself is focused.
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      closeWindow();
+    }
+  });
+
   // IPC listeners
   ipcRenderer.on('focus-search', async () => {
     // The search window is created once and reused (shown/hidden), so
@@ -122,9 +131,6 @@ function handleSearch(e) {
 
 function handleKeyDown(e) {
   switch (e.key) {
-    case 'Escape':
-      closeWindow();
-      break;
     case 'ArrowDown':
       e.preventDefault();
       if (filteredResults.length > 0) {

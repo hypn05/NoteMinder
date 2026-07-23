@@ -24,6 +24,29 @@ button, input, textarea, select, a, [contenteditable] {
   width: 100vw;
 }
 
+/* Width-resize handle: sits on whichever side is NOT docked to the screen
+   edge (the docked side has nowhere to grab). Hidden while collapsed. */
+#resize-handle {
+  display: none;
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 6px;
+  cursor: ew-resize;
+  z-index: 1001;
+  -webkit-app-region: no-drag;
+}
+
+body.expanded #resize-handle {
+  display: block;
+}
+
+body.expanded.left-edge #resize-handle {
+  left: auto;
+  right: 0;
+}
+
 /* Arrow tab - leftmost */
 #arrow-tab {
   position: fixed;
@@ -106,6 +129,17 @@ button, input, textarea, select, a, [contenteditable] {
   width: 30%;
   min-width: 250px;
   opacity: 1;
+}
+
+/* The editor panel only serves the Notes tab; Passwords and Clips have
+   nothing to show there, so let the sidebar use the full window instead
+   of leaving that column empty. */
+#app.wide-mode #sidebar.expanded {
+  width: 100%;
+}
+
+#app.wide-mode #editor-container {
+  display: none;
 }
 
 /* Sidebar content */
@@ -411,9 +445,45 @@ button, input, textarea, select, a, [contenteditable] {
   color: var(--text-secondary);
 }
 
-#editor-toolbar {
-  padding: var(--spacing-md);
-  border-bottom: 1px solid var(--border-color);
+/* Floating formatting toolbar: appears near selected text instead of a
+   fixed always-visible row, to keep the editor chrome minimal */
+.format-toolbar {
+  position: fixed;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  background: var(--bg-secondary);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: 0 4px 16px var(--shadow-color);
+  z-index: 900;
+  -webkit-app-region: no-drag;
+}
+
+.format-btn {
+  min-width: 28px;
+  height: 28px;
+  padding: 0 6px;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.format-btn:hover {
+  background: var(--bg-hover);
+}
+
+.format-sep {
+  width: 1px;
+  height: 18px;
+  background: var(--border-color);
+  margin: 0 2px;
 }
 
 #editor {

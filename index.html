@@ -26,7 +26,11 @@
     <div id="arrow-tab">
       <span id="arrow-icon">◀</span>
     </div>
-    
+
+    <!-- Custom width-resize handle (native horizontal resize is unreliable
+         on transparent frameless windows, so this is driven manually) -->
+    <div id="resize-handle"></div>
+
     <!-- Sidebar (Notes List) -->
     <div id="sidebar" class="collapsed">
       <div id="sidebar-content">
@@ -100,6 +104,12 @@
       <div id="editor-header">
         <input id="note-title" class="note-title-input" type="text" placeholder="Untitled" spellcheck="false" />
         <div id="editor-actions">
+          <div class="dropdown">
+            <button id="insert-menu-dropdown" class="btn btn-icon" title="Insert">
+              ➕
+            </button>
+            <div class="dropdown-menu hidden"></div>
+          </div>
           <button id="btn-shortcuts" class="btn btn-icon" title="Keyboard Shortcuts (⌘/)">
             ⌨️
           </button>
@@ -112,72 +122,24 @@
           <button id="btn-reminder" class="btn btn-icon" title="Set Reminder">
             ⏰
           </button>
-          <button id="btn-import-md" class="btn btn-icon" title="Import Markdown">
-            📄
-          </button>
         </div>
       </div>
-      
-      <!-- Editor Toolbar -->
-      <div id="editor-toolbar" class="toolbar">
-        <!-- Text Formatting Group -->
-        <div class="toolbar-group">
-          <button id="btn-bold" class="btn btn-icon" title="Bold">
-            <strong>B</strong>
-          </button>
-          <button id="btn-italic" class="btn btn-icon" title="Italic">
-            <em>I</em>
-          </button>
-          <button id="btn-underline" class="btn btn-icon" title="Underline">
-            <u>U</u>
-          </button>
-        </div>
-        
-        <!-- Heading Group -->
-        <div class="toolbar-group">
-          <div class="dropdown">
-            <button id="heading-dropdown" class="btn btn-small">
-              H ▾
-            </button>
-            <div class="dropdown-menu hidden"></div>
-          </div>
-        </div>
-        
-        <!-- Insert Group -->
-        <div class="toolbar-group">
-          <div class="dropdown">
-            <button id="insert-dropdown" class="btn btn-small">
-              Insert ▾
-            </button>
-            <div class="dropdown-menu hidden"></div>
-          </div>
-        </div>
-        
-        <!-- List Group -->
-        <div class="toolbar-group">
-          <div class="dropdown">
-            <button id="list-dropdown" class="btn btn-small">
-              List ▾
-            </button>
-            <div class="dropdown-menu hidden"></div>
-          </div>
-        </div>
-        
-        <!-- Image Group -->
-        <div class="toolbar-group">
-          <button id="btn-image" class="btn btn-icon" title="Insert Image">
-            🖼️
-          </button>
-        </div>
-        
-        <!-- Password Group -->
-        <div class="toolbar-group">
-          <button id="btn-password" class="btn btn-icon" title="Add Password Field">
-            🔐
-          </button>
-        </div>
+
+      <!-- Floating formatting toolbar: appears near selected text instead of
+           a fixed always-visible row -->
+      <div id="format-toolbar" class="format-toolbar hidden">
+        <button class="format-btn" data-cmd="bold" title="Bold"><strong>B</strong></button>
+        <button class="format-btn" data-cmd="italic" title="Italic"><em>I</em></button>
+        <button class="format-btn" data-cmd="underline" title="Underline"><u>U</u></button>
+        <span class="format-sep"></span>
+        <button class="format-btn" data-heading="1" title="Heading 1">H1</button>
+        <button class="format-btn" data-heading="2" title="Heading 2">H2</button>
+        <button class="format-btn" data-heading="3" title="Heading 3">H3</button>
+        <span class="format-sep"></span>
+        <button class="format-btn" data-action="code" title="Code">&lt;/&gt;</button>
+        <button class="format-btn" data-action="link" title="Link">🔗</button>
       </div>
-      
+
       <!-- Find-in-note bar (hidden by default) -->
       <div id="find-bar" class="find-bar hidden">
         <input type="text" id="find-input" placeholder="Find in note…" spellcheck="false" />
