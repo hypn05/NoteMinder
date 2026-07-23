@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu, dialog, Notification, shell, globalShortcut, systemPreferences, powerMonitor, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, dialog, Notification, shell, globalShortcut, systemPreferences, powerMonitor, screen, clipboard } = require('electron');
 const path = require('path');
 const Storage = require('./utils/storage');
 const ReminderManager = require('./utils/reminder');
@@ -10,6 +10,7 @@ const notesStorage = new Storage('notes.json');
 const settingsStorage = new Storage('settings.json');
 const passwordsStorage = new Storage('passwords.json');
 const securitySettingsStorage = new Storage('security-settings.json');
+const clipsStorage = new Storage('clips.json');
 const securityManager = new SecurityManager();
 
 let mainWindow = null;
@@ -21,6 +22,13 @@ let isCollapsed = true;
 let currentScreenId = null;
 let pendingUpdate = null;
 
+// Which screen edge the floating tab is docked to, and its vertical
+// position as a ratio (0-1) of the target display's work area height.
+let currentEdge = 'right';
+let tabYRatio = 0.5;
+let dragStartBounds = null;
+let isDraggingTab = false;
+
 // Authentication session tracking
 let lastAuthTime = null;
 let lastActivityTime = Date.now();
@@ -29,6 +37,21 @@ let authenticationGranted = false;
 // Hide dock icon on macOS before app is ready
 if (process.platform === 'darwin') {
   app.dock.hide();
+}
+
+// Computes the bounds that keep the window docked to `edge` at vertical
+// ratio `yRatio` (0-1 of the display's work area height), clamped to stay
+// fully on the target display.
+function computeSnappedBounds(width, height, edge, yRatio, targetDisplay) {
+  const { width: screenWidth, height: screenHeight } = targetDisplay.workAreaSize;
+  const { x: screenX, y: screenY } = targetDisplay.bounds;
+
+  const x = edge === 'left' ? screenX : screenX + screenWidth - width;
+  let y = screenY + Math.round(yRatio * screenHeight) - Math.floor(height / 2);
+  if (y < screenY) y = screenY;
+  if (y + height > screenY + screenHeight) y = screenY + screenHeight - height;
+
+  return { x, y, width, height };
 }
 
 function createWindow() {
@@ -46,18 +69,19 @@ function createWindow() {
   }
 
   currentScreenId = targetDisplay.id;
-  const { width: screenWidth, height: screenHeight } = targetDisplay.workAreaSize;
-  const { x: screenX, y: screenY } = targetDisplay.bounds;
+  currentEdge = settings.edge === 'left' ? 'left' : 'right';
+  tabYRatio = typeof settings.tabYRatio === 'number' ? settings.tabYRatio : 0.5;
 
   // Start collapsed: 30px width, 80px height (arrow tab size)
   const collapsedWidth = 30;
   const collapsedHeight = 80;
+  const startBounds = computeSnappedBounds(collapsedWidth, collapsedHeight, currentEdge, tabYRatio, targetDisplay);
 
   mainWindow = new BrowserWindow({
     width: collapsedWidth,
     height: collapsedHeight,
-    x: screenX + screenWidth - collapsedWidth,
-    y: screenY + Math.floor((screenHeight - collapsedHeight) / 2),
+    x: startBounds.x,
+    y: startBounds.y,
     frame: false,
     transparent: true,
     alwaysOnTop: true,
@@ -85,6 +109,23 @@ function createWindow() {
     if (!settings.stayInView && !isCollapsed) {
       mainWindow.webContents.send('collapse-sidebar');
     }
+  });
+
+  // Remember a manually-resized expanded size so the next expand uses it
+  // instead of resetting to the default, and persist it across restarts.
+  let resizeSaveTimer = null;
+  mainWindow.on('resize', () => {
+    if (isCollapsed || !mainWindow) return;
+    const bounds = mainWindow.getBounds();
+    mainWindow.webContents.send('window-resized', { width: bounds.width, height: bounds.height });
+
+    clearTimeout(resizeSaveTimer);
+    resizeSaveTimer = setTimeout(() => {
+      const currentSettings = settingsStorage.read() || {};
+      currentSettings.expandedWidth = bounds.width;
+      currentSettings.expandedHeight = bounds.height;
+      settingsStorage.write(currentSettings);
+    }, 300);
   });
 
   // Continuously monitor and hide dock icon on macOS
@@ -199,9 +240,9 @@ function updateTrayMenu() {
     {
       label: `Update Available (v${pendingUpdate.latestVersion})`,
       click: () => {
-        // Trigger the download through AutoUpdater
-        if (updateChecker) {
-          updateChecker.downloadUpdate();
+        // AutoUpdater doesn't download in-app; point the user to the release
+        if (pendingUpdate.releaseUrl) {
+          shell.openExternal(pendingUpdate.releaseUrl);
         }
       }
     },
@@ -399,6 +440,30 @@ function updateTrayMenu() {
 }
 
 
+// Reads the current OS clipboard and saves it as a clip, from any app.
+// Shared by the global shortcut and the sidebar's "Add from Clipboard" button.
+function captureClipboardClip() {
+  const text = (clipboard.readText() || '').trim();
+  if (!text) {
+    return { success: false, error: 'Clipboard is empty' };
+  }
+
+  const clips = clipsStorage.read() || [];
+  if (clips[0] && clips[0].text === text) {
+    return { success: true, clip: clips[0], duplicate: true };
+  }
+
+  const clip = { id: Date.now().toString(), text, created: new Date().toISOString() };
+  clips.unshift(clip);
+  clipsStorage.write(clips);
+
+  if (mainWindow) {
+    mainWindow.webContents.send('reload-clips');
+  }
+
+  return { success: true, clip };
+}
+
 function repositionWindow(screenId) {
   if (!mainWindow) return;
 
@@ -411,15 +476,9 @@ function repositionWindow(screenId) {
 
   currentScreenId = targetDisplay.id;
   const bounds = mainWindow.getBounds();
-  const { width: screenWidth, height: screenHeight } = targetDisplay.workAreaSize;
-  const { x: screenX, y: screenY } = targetDisplay.bounds;
-
-  mainWindow.setBounds({
-    x: screenX + screenWidth - bounds.width,
-    y: screenY + Math.floor((screenHeight - bounds.height) / 2),
-    width: bounds.width,
-    height: bounds.height
-  });
+  mainWindow.setBounds(
+    computeSnappedBounds(bounds.width, bounds.height, currentEdge, tabYRatio, targetDisplay)
+  );
 }
 
 // IPC Handlers
@@ -449,6 +508,16 @@ ipcMain.handle('save-passwords', (event, passwords) => {
   return passwordsStorage.write(passwords);
 });
 
+ipcMain.handle('get-clips', () => {
+  return clipsStorage.read() || [];
+});
+
+ipcMain.handle('save-clips', (event, clips) => {
+  return clipsStorage.write(clips);
+});
+
+ipcMain.handle('capture-clipboard-clip', () => captureClipboardClip());
+
 ipcMain.on('resize-window', (event, { width, height }) => {
   if (mainWindow) {
     const displays = screen.getAllDisplays();
@@ -459,26 +528,86 @@ ipcMain.on('resize-window', (event, { width, height }) => {
       currentScreenId = targetDisplay.id;
     }
 
-    const { width: screenWidth, height: screenHeight } = targetDisplay.workAreaSize;
-    const { x: screenX, y: screenY } = targetDisplay.bounds;
-
-    mainWindow.setBounds({
-      x: screenX + screenWidth - width,
-      y: screenY + Math.floor((screenHeight - height) / 2),
-      width: width,
-      height: height
-    });
+    mainWindow.setBounds(
+      computeSnappedBounds(width, height, currentEdge, tabYRatio, targetDisplay)
+    );
   }
 });
 
 ipcMain.on('set-collapsed', (event, collapsed) => {
   isCollapsed = collapsed;
+  if (mainWindow) {
+    // Set the minimum size before resizable, and before the renderer's
+    // follow-up 'resize-window' call, so collapsing to 30x80 is never
+    // clamped by a leftover 500x300 minimum from the expanded state.
+    mainWindow.setMinimumSize(collapsed ? 30 : 500, collapsed ? 80 : 300);
+    mainWindow.setResizable(!collapsed);
+  }
 });
 
 ipcMain.on('set-ignore-mouse', (event, ignore) => {
   if (mainWindow) {
     mainWindow.setIgnoreMouseEvents(ignore, { forward: true });
   }
+});
+
+// Dragging the floating tab: the renderer tracks mouse movement itself
+// (app-region drag can't tell us when the drag ends, which we need to
+// snap back to an edge), and streams deltas here to move the window.
+ipcMain.on('tab-drag-start', () => {
+  if (mainWindow) {
+    dragStartBounds = mainWindow.getBounds();
+  }
+});
+
+ipcMain.on('tab-drag-move', (event, { dx, dy }) => {
+  if (mainWindow && dragStartBounds) {
+    // Only disable resizing once real movement is confirmed, since a
+    // plain click (no move) never fires 'tab-drag-end' to restore it.
+    if (!isDraggingTab) {
+      isDraggingTab = true;
+      mainWindow.setResizable(false);
+    }
+    dragStartBounds.x += dx;
+    dragStartBounds.y += dy;
+    mainWindow.setBounds(dragStartBounds);
+  }
+});
+
+ipcMain.on('tab-drag-end', () => {
+  isDraggingTab = false;
+  if (!mainWindow) {
+    dragStartBounds = null;
+    return;
+  }
+
+  const displays = screen.getAllDisplays();
+  const bounds = mainWindow.getBounds();
+  const centerX = bounds.x + bounds.width / 2;
+  const centerY = bounds.y + bounds.height / 2;
+
+  const targetDisplay = displays.find(d =>
+    centerX >= d.bounds.x && centerX < d.bounds.x + d.bounds.width &&
+    centerY >= d.bounds.y && centerY < d.bounds.y + d.bounds.height
+  ) || screen.getPrimaryDisplay();
+
+  currentScreenId = targetDisplay.id;
+  currentEdge = (centerX - targetDisplay.bounds.x) < targetDisplay.bounds.width / 2 ? 'left' : 'right';
+  tabYRatio = Math.min(1, Math.max(0,
+    (centerY - targetDisplay.bounds.y) / targetDisplay.workAreaSize.height
+  ));
+
+  dragStartBounds = null;
+  repositionWindow(currentScreenId);
+  mainWindow.setResizable(!isCollapsed);
+  mainWindow.webContents.send('edge-changed', currentEdge);
+
+  const settings = settingsStorage.read() || {};
+  settings.edge = currentEdge;
+  settings.tabYRatio = tabYRatio;
+  settings.screenId = currentScreenId;
+  settingsStorage.write(settings);
+  updateTrayMenu();
 });
 
 ipcMain.on('show-notification', (event, { title, body, noteId }) => {
@@ -575,6 +704,20 @@ ipcMain.on('close-search-window', () => {
 
 ipcMain.on('open-search-window', () => {
   createSearchWindow();
+});
+
+ipcMain.on('create-note-from-search', () => {
+  if (mainWindow) {
+    mainWindow.show();
+    mainWindow.focus();
+    if (isCollapsed) {
+      mainWindow.webContents.send('expand-sidebar');
+    }
+    mainWindow.webContents.send('new-note');
+  }
+  if (searchWindow) {
+    searchWindow.hide();
+  }
 });
 
 // Security IPC Handlers
@@ -738,7 +881,24 @@ app.whenReady().then(async () => {
   if (!ret) {
     console.error('Global shortcut registration failed');
   }
-  
+
+  // Register global shortcut to save the current clipboard as a clip,
+  // from any app, without needing to open NoteMinder first
+  const clipShortcut = process.platform === 'darwin' ? 'Command+Shift+V' : 'Control+Shift+V';
+  const clipRet = globalShortcut.register(clipShortcut, () => {
+    const result = captureClipboardClip();
+    if (result.success && !result.duplicate && Notification.isSupported()) {
+      const preview = result.clip.text.length > 60
+        ? result.clip.text.substring(0, 60) + '...'
+        : result.clip.text;
+      new Notification({ title: 'Clip saved', body: preview, silent: true }).show();
+    }
+  });
+
+  if (!clipRet) {
+    console.error('Clip shortcut registration failed');
+  }
+
   // Request notification permissions on macOS
   if (process.platform === 'darwin') {
     // macOS requires explicit permission request

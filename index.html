@@ -55,9 +55,13 @@
               <span class="tab-icon">🔐</span>
               <span class="tab-count" id="passwords-count">0</span>
             </button>
+            <button class="sidebar-tab" data-tab="clips" title="Clips">
+              <span class="tab-icon">📋</span>
+              <span class="tab-count" id="clips-count">0</span>
+            </button>
           </div>
         </div>
-        
+
         <!-- Tab Content Container -->
         <div class="tab-content-container">
           <!-- Notes Tab -->
@@ -67,13 +71,24 @@
             </button>
             <div id="notes-container"></div>
           </div>
-          
+
           <!-- Passwords Tab -->
           <div class="tab-content" data-content="passwords">
             <button id="new-password-btn" class="new-item-btn">
               🔐 New Password
             </button>
             <div id="passwords-container"></div>
+          </div>
+
+          <!-- Clips Tab -->
+          <div class="tab-content" data-content="clips">
+            <button id="new-clip-btn" class="new-item-btn" title="Save the current clipboard contents">
+              📋 Add from Clipboard
+            </button>
+            <div style="text-align: center; font-size: 11px; color: var(--text-tertiary); margin: -8px 0 12px;">
+              or press ⌘⇧V from anywhere
+            </div>
+            <div id="clips-container"></div>
           </div>
         </div>
       </div>

@@ -1,12 +1,15 @@
-const { ipcRenderer } = require('electron');
+const { ipcRenderer, clipboard } = require('electron');
 const PasswordManager = require('./utils/passwordManager');
+const ClipManager = require('./utils/clipManager');
 
 // State
 let notes = [];
 let passwords = [];
-let filteredResults = []; // Combined notes and passwords
+let clips = [];
+let filteredResults = []; // Combined notes, passwords and clips
 let selectedIndex = -1;
 let passwordManager = new PasswordManager();
+let clipManager = new ClipManager();
 
 // DOM Elements
 const searchInput = document.getElementById('search-input');
@@ -16,6 +19,7 @@ const resultsContainer = document.getElementById('results-container');
 async function init() {
   await loadNotes();
   await loadPasswords();
+  await loadClips();
   setupEventListeners();
 }
 
@@ -27,19 +31,37 @@ async function loadPasswords() {
   passwords = await passwordManager.loadPasswords();
 }
 
+async function loadClips() {
+  clips = await clipManager.loadClips();
+}
+
 function setupEventListeners() {
   // Search input
   searchInput.addEventListener('input', handleSearch);
-  
+
   // Keyboard navigation
   searchInput.addEventListener('keydown', handleKeyDown);
-  
+
   // IPC listeners
-  ipcRenderer.on('focus-search', () => {
+  ipcRenderer.on('focus-search', async () => {
+    // The search window is created once and reused (shown/hidden), so
+    // refresh data on every reopen or newly created notes/passwords/clips
+    // would stay invisible until the app was restarted.
+    await loadNotes();
+    await loadPasswords();
+    await loadClips();
     searchInput.focus();
     searchInput.select();
   });
 }
+
+// Slash-style commands typed into the search box, e.g. ":n" to create a new note
+const SEARCH_COMMANDS = {
+  ':n': () => {
+    ipcRenderer.send('create-note-from-search');
+    closeWindow();
+  }
+};
 
 function handleSearch(e) {
   const query = e.target.value.trim();
@@ -50,6 +72,11 @@ function handleSearch(e) {
   }
 
   const lowerQuery = query.toLowerCase();
+
+  if (SEARCH_COMMANDS[lowerQuery]) {
+    SEARCH_COMMANDS[lowerQuery]();
+    return;
+  }
 
   // Match notes on title OR content. Track titleMatch so title hits rank first.
   const matchedNotes = notes.reduce((acc, note) => {
@@ -68,7 +95,11 @@ function handleSearch(e) {
     return label.includes(lowerQuery);
   }).map(password => ({ type: 'password', data: password, titleMatch: true }));
 
-  filteredResults = [...matchedNotes, ...matchedPasswords];
+  const matchedClips = clips.filter(clip => {
+    return clip.text.toLowerCase().includes(lowerQuery);
+  }).map(clip => ({ type: 'clip', data: clip, titleMatch: false }));
+
+  filteredResults = [...matchedNotes, ...matchedPasswords, ...matchedClips];
 
   // Sort: favorites first, then title matches above content matches, then recency.
   filteredResults.sort((a, b) => {
@@ -132,9 +163,14 @@ function renderResults(query) {
   }
   
   filteredResults.forEach((result, index) => {
-    const resultItem = result.type === 'note' 
-      ? createNoteResultItem(result.data, query, index === selectedIndex)
-      : createPasswordResultItem(result.data, query, index === selectedIndex);
+    let resultItem;
+    if (result.type === 'note') {
+      resultItem = createNoteResultItem(result.data, query, index === selectedIndex);
+    } else if (result.type === 'password') {
+      resultItem = createPasswordResultItem(result.data, query, index === selectedIndex);
+    } else {
+      resultItem = createClipResultItem(result.data, query, index === selectedIndex);
+    }
     resultsContainer.appendChild(resultItem);
   });
 }
@@ -145,7 +181,15 @@ function handleResultAction(result) {
   } else if (result.type === 'password') {
     // For passwords, copy to clipboard
     copyPassword(result.data);
+  } else if (result.type === 'clip') {
+    copyClip(result.data);
   }
+}
+
+function copyClip(clip) {
+  clipboard.writeText(clip.text);
+  showToast('Copied to clipboard');
+  setTimeout(() => closeWindow(), 500);
 }
 
 async function copyPassword(password) {
@@ -259,7 +303,35 @@ function createPasswordResultItem(password, query, isSelected) {
     selectedIndex = filteredResults.findIndex(r => r.type === 'password' && r.data.id === password.id);
     updateSelection();
   });
-  
+
+  return item;
+}
+
+function createClipResultItem(clip, query, isSelected) {
+  const item = document.createElement('div');
+  item.className = 'result-item';
+  if (isSelected) {
+    item.classList.add('selected');
+  }
+
+  let snippet = clip.text.replace(/\s+/g, ' ').trim();
+  if (snippet.length > 100) snippet = snippet.substring(0, 100) + '…';
+  if (query) snippet = highlightText(snippet, query);
+
+  item.innerHTML = `
+    <div class="result-icon">📋</div>
+    <div class="result-details">
+      <div class="result-content">${snippet}</div>
+    </div>
+  `;
+
+  item.addEventListener('click', () => copyClip(clip));
+
+  item.addEventListener('mouseenter', () => {
+    selectedIndex = filteredResults.findIndex(r => r.type === 'clip' && r.data.id === clip.id);
+    updateSelection();
+  });
+
   return item;
 }
 

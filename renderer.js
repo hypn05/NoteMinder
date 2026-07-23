@@ -1,24 +1,30 @@
-const { ipcRenderer } = require('electron');
+const { ipcRenderer, clipboard } = require('electron');
 const Modal = require('./components/modal');
 const Editor = require('./components/editor');
 const NoteCard = require('./components/noteCard');
 const PasswordCard = require('./components/passwordCard');
 const PasswordModal = require('./components/passwordModal');
 const PasswordManager = require('./utils/passwordManager');
+const ClipCard = require('./components/clipCard');
+const ClipManager = require('./utils/clipManager');
 const ReminderManager = require('./utils/reminder');
 
 // State
 let notes = [];
 let passwords = [];
+let clips = [];
 let currentNote = null;
 let currentPassword = null;
 let isCollapsed = true;
 let searchQuery = '';
+let expandedSize = { width: 800, height: Math.floor(window.screen.availHeight * 0.8) };
+let tabDragMoved = false;
 
 // Components
 let modal = new Modal();
 let passwordModal = new PasswordModal();
 let passwordManager = new PasswordManager();
+let clipManager = new ClipManager();
 let editor = null;
 let reminderManager = null;
 
@@ -42,9 +48,10 @@ async function init() {
   editor = new Editor(editorElement);
   editor.onChange = saveCurrentNote;
   
-  // Load notes and passwords
+  // Load notes, passwords and clips
   await loadNotes();
   await loadPasswords();
+  await loadClips();
   
   // Setup event listeners
   setupEventListeners();
@@ -83,15 +90,19 @@ async function checkNotificationPermissions() {
 }
 
 function setupEventListeners() {
-  // Arrow tab toggle
-  arrowTab.addEventListener('click', toggleSidebar);
-  
+  // Arrow tab toggle (suppressed if the click was actually the end of a drag)
+  arrowTab.addEventListener('click', () => {
+    if (tabDragMoved) return;
+    toggleSidebar();
+  });
+  setupTabDragging();
+
   // Search
   searchInput.addEventListener('input', handleSearch);
-  
+
   // New note button
   newNoteBtn.addEventListener('click', createNewNote);
-  
+
   // New password button
   const newPasswordBtn = document.getElementById('new-password-btn');
   if (newPasswordBtn) {
@@ -104,7 +115,21 @@ function setupEventListeners() {
       }
     });
   }
-  
+
+  // New clip button (captures the current OS clipboard contents)
+  const newClipBtn = document.getElementById('new-clip-btn');
+  if (newClipBtn) {
+    newClipBtn.addEventListener('click', async () => {
+      const result = await clipManager.captureFromClipboard();
+      if (result.success) {
+        await loadClips();
+        showMessage(result.duplicate ? 'Already saved' : 'Clip saved', 'success');
+      } else {
+        showMessage(result.error || 'Failed to save clip', 'error');
+      }
+    });
+  }
+
   // Tab switching
   const tabs = document.querySelectorAll('.sidebar-tab');
   tabs.forEach(tab => {
@@ -230,26 +255,56 @@ function setupEventListeners() {
       toggleSidebar();
     }
   });
+
+  // Escape collapses the expanded window (unless a modal or the find bar
+  // is on top of it, in which case its own Escape handler closes it instead)
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || isCollapsed) return;
+    if (document.querySelector('.modal-overlay')) return;
+    const findBar = document.getElementById('find-bar');
+    if (findBar && !findBar.classList.contains('hidden')) return;
+    toggleSidebar();
+  });
 }
 
 function setupIpcListeners() {
   ipcRenderer.on('init-settings', (event, settings) => {
     applyTheme(settings.theme);
+    applyEdge(settings.edge === 'left' ? 'left' : 'right');
+    if (settings.expandedWidth && settings.expandedHeight) {
+      expandedSize = { width: settings.expandedWidth, height: settings.expandedHeight };
+    }
   });
-  
+
+  // Main process reports the user's manual resize so the next expand
+  // remembers it instead of resetting to the default size.
+  ipcRenderer.on('window-resized', (event, { width, height }) => {
+    if (!isCollapsed) {
+      expandedSize = { width, height };
+    }
+  });
+
+  ipcRenderer.on('edge-changed', (event, edge) => {
+    applyEdge(edge);
+  });
+
   ipcRenderer.on('theme-changed', (event, theme) => {
     applyTheme(theme);
   });
-  
+
   ipcRenderer.on('new-note', () => {
     createNewNote();
   });
-  
+
   ipcRenderer.on('reload-notes', async () => {
     await loadNotes();
     renderNotes();
   });
-  
+
+  ipcRenderer.on('reload-clips', async () => {
+    await loadClips();
+  });
+
   ipcRenderer.on('show-message', (event, { type, message }) => {
     showMessage(message, type);
   });
@@ -321,9 +376,46 @@ function setupMouseTracking() {
   });
 }
 
+function setupTabDragging() {
+  let dragOrigin = null;
+
+  arrowTab.addEventListener('mousedown', (e) => {
+    dragOrigin = { x: e.screenX, y: e.screenY };
+    tabDragMoved = false;
+    ipcRenderer.send('tab-drag-start');
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (!dragOrigin) return;
+    const dx = e.screenX - dragOrigin.x;
+    const dy = e.screenY - dragOrigin.y;
+    if (!tabDragMoved && Math.hypot(dx, dy) < 4) return;
+    tabDragMoved = true;
+    ipcRenderer.send('tab-drag-move', { dx, dy });
+    dragOrigin = { x: e.screenX, y: e.screenY };
+  });
+
+  document.addEventListener('mouseup', () => {
+    if (!dragOrigin) return;
+    if (tabDragMoved) {
+      ipcRenderer.send('tab-drag-end');
+    }
+    dragOrigin = null;
+  });
+}
+
+function applyEdge(edge) {
+  arrowTab.classList.toggle('left-edge', edge === 'left');
+}
+
 function toggleSidebar() {
   isCollapsed = !isCollapsed;
-  
+
+  // Tell main process about the collapsed state first so it can adjust
+  // resizable/minimum-size constraints before the bounds are changed below
+  // (otherwise a stale minimum size can clamp the collapse to 30x80).
+  ipcRenderer.send('set-collapsed', isCollapsed);
+
   if (isCollapsed) {
     sidebar.classList.remove('expanded');
     sidebar.classList.add('collapsed');
@@ -334,13 +426,8 @@ function toggleSidebar() {
     sidebar.classList.remove('collapsed');
     sidebar.classList.add('expanded');
     arrowTab.classList.add('expanded');
-    // Expanded: 800px width, 80% of screen height
-    const screenHeight = window.screen.availHeight;
-    const windowHeight = Math.floor(screenHeight * 0.8);
-    ipcRenderer.send('resize-window', { width: 800, height: windowHeight });
+    ipcRenderer.send('resize-window', { width: expandedSize.width, height: expandedSize.height });
   }
-  
-  ipcRenderer.send('set-collapsed', isCollapsed);
 }
 
 async function loadNotes() {
@@ -467,6 +554,51 @@ async function togglePasswordFavorite(password) {
   password.isFavorite = !password.isFavorite;
   await passwordManager.updatePassword(password);
   await loadPasswords();
+}
+
+async function loadClips() {
+  clips = await clipManager.loadClips();
+  renderClips();
+}
+
+function renderClips() {
+  const clipsContainer = document.getElementById('clips-container');
+  const clipsCount = document.getElementById('clips-count');
+
+  if (!clipsContainer || !clipsCount) return;
+
+  clipsContainer.innerHTML = '';
+  clipsCount.textContent = clips.length;
+
+  if (clips.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'empty-state';
+    empty.style.padding = 'var(--spacing-md)';
+    empty.innerHTML = `
+      <div class="empty-state-icon" style="font-size: 32px;">📋</div>
+      <div class="empty-state-text">No clips yet</div>
+    `;
+    clipsContainer.appendChild(empty);
+    return;
+  }
+
+  clips.forEach(clip => {
+    const clipCard = new ClipCard(clip, {
+      onCopy: copyClip,
+      onDelete: deleteClip
+    });
+    clipsContainer.appendChild(clipCard.render());
+  });
+}
+
+function copyClip(clip) {
+  clipboard.writeText(clip.text);
+  showMessage('Copied to clipboard', 'success');
+}
+
+async function deleteClip(clip) {
+  await clipManager.deleteClip(clip.id);
+  await loadClips();
 }
 
 async function saveNotes() {

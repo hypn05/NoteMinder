@@ -40,16 +40,28 @@ button, input, textarea, select, a, [contenteditable] {
   display: flex;
   align-items: center;
   justify-content: center;
-  cursor: pointer;
+  cursor: grab;
   transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   z-index: 1000;
   -webkit-app-region: no-drag;
+}
+
+#arrow-tab:active {
+  cursor: grabbing;
 }
 
 #arrow-tab:hover {
   background: rgba(45, 45, 68, 0.9);
   width: 35px;
   transform: translateY(-50%) scale(1.05);
+}
+
+/* When docked to the left edge, mirror the rounded corners so the flat
+   side stays flush against the screen edge */
+#arrow-tab.left-edge {
+  border-left: 1px solid var(--border-color);
+  border-right: none;
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
 }
 
 #arrow-icon {
@@ -60,6 +72,16 @@ button, input, textarea, select, a, [contenteditable] {
 
 #arrow-tab.expanded #arrow-icon {
   transform: rotate(180deg);
+}
+
+/* Mirror the arrow direction on the left edge: it should point toward
+   the direction the panel will expand/collapse */
+#arrow-tab.left-edge #arrow-icon {
+  transform: rotate(180deg);
+}
+
+#arrow-tab.left-edge.expanded #arrow-icon {
+  transform: rotate(0deg);
 }
 
 /* Sidebar styles */
