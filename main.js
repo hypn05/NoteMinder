@@ -41,16 +41,21 @@ if (process.platform === 'darwin') {
 }
 
 // Computes the bounds that keep the window docked to `edge` at vertical
-// ratio `yRatio` (0-1 of the display's work area height), clamped to stay
-// fully on the target display.
+// ratio `yRatio` (0-1 of the display's work area height).
+// Horizontal position uses the full display bounds so the tab sits flush
+// against the physical screen edge. Vertical position is relative to the
+// work area so the tab stays below the menu bar and above the dock.
+// (Mixing bounds origin with workAreaSize width was leaving a gap equal to
+// bounds.width - workArea.width whenever the dock/Stage Manager reduced the
+// usable width — most visible when docked on the right.)
 function computeSnappedBounds(width, height, edge, yRatio, targetDisplay) {
-  const { width: screenWidth, height: screenHeight } = targetDisplay.workAreaSize;
-  const { x: screenX, y: screenY } = targetDisplay.bounds;
+  const { x: boundX, width: boundW } = targetDisplay.bounds;
+  const { y: workY, height: workH } = targetDisplay.workArea;
 
-  const x = edge === 'left' ? screenX : screenX + screenWidth - width;
-  let y = screenY + Math.round(yRatio * screenHeight) - Math.floor(height / 2);
-  if (y < screenY) y = screenY;
-  if (y + height > screenY + screenHeight) y = screenY + screenHeight - height;
+  const x = edge === 'left' ? boundX : boundX + boundW - width;
+  let y = workY + Math.round(yRatio * workH) - Math.floor(height / 2);
+  if (y < workY) y = workY;
+  if (y + height > workY + workH) y = workY + workH - height;
 
   return { x, y, width, height };
 }
@@ -595,7 +600,7 @@ ipcMain.on('tab-drag-end', () => {
   currentScreenId = targetDisplay.id;
   currentEdge = (centerX - targetDisplay.bounds.x) < targetDisplay.bounds.width / 2 ? 'left' : 'right';
   tabYRatio = Math.min(1, Math.max(0,
-    (centerY - targetDisplay.bounds.y) / targetDisplay.workAreaSize.height
+    (centerY - targetDisplay.workArea.y) / targetDisplay.workArea.height
   ));
 
   dragStartBounds = null;
