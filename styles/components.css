@@ -35,17 +35,29 @@
 }
 
 .btn-small {
-  padding: var(--spacing-xs) var(--spacing-sm);
+  padding: 0 10px;
   font-size: 12px;
+  height: 32px;
+  min-height: 32px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
 }
 
 .btn-icon {
-  padding: var(--spacing-sm);
+  padding: 0;
   width: 32px;
   height: 32px;
-  display: flex;
+  min-width: 32px;
+  min-height: 32px;
+  line-height: 1;
+  font-size: 16px;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
+  box-sizing: border-box;
 }
 
 /* Input component */
@@ -250,6 +262,7 @@
 /* Toolbar component */
 .toolbar {
   display: flex;
+  align-items: center;
   gap: var(--spacing-xs);
   padding: var(--spacing-sm);
   background: var(--bg-tertiary);
@@ -259,6 +272,7 @@
 
 .toolbar-group {
   display: flex;
+  align-items: center;
   gap: var(--spacing-xs);
   padding-right: var(--spacing-sm);
   border-right: 1px solid var(--border-color);
@@ -305,14 +319,28 @@
   background: linear-gradient(90deg, rgba(255, 215, 0, 0.1) 0%, var(--bg-secondary) 10%);
 }
 
+/* Persistent favorite star — readable on any background (gold fill, dark
+   outline via text-shadow). Sits on the left edge of the card. */
 .note-card.favorite::before {
-  content: '⭐';
+  content: '★';
   position: absolute;
-  top: 8px;
-  left: 8px;
-  font-size: 12px;
-  opacity: 0.3;
+  top: 50%;
+  left: 6px;
+  transform: translateY(-50%);
+  font-size: 14px;
+  color: #ffc107;
+  opacity: 1;
   pointer-events: none;
+  text-shadow:
+    0 0 2px rgba(0, 0, 0, 0.85),
+    0 0 1px rgba(0, 0, 0, 0.85),
+    0 1px 2px rgba(0, 0, 0, 0.5);
+  z-index: 1;
+}
+
+/* Make room for the star so it doesn't overlap the title text. */
+.note-card.favorite .note-card-content {
+  padding-left: 18px;
 }
 
 /* Password Field Component */
@@ -336,6 +364,13 @@
 
 .password-field-icon {
   font-size: 18px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 32px;
+  width: 32px;
+  flex-shrink: 0;
 }
 
 .password-field-label {
@@ -351,10 +386,16 @@
   color: var(--text-tertiary);
   cursor: pointer;
   font-size: 16px;
-  padding: var(--spacing-xs);
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  flex-shrink: 0;
   border-radius: var(--radius-sm);
   transition: all var(--transition-fast);
-  line-height: 1;
 }
 
 .password-field-delete:hover {
@@ -404,10 +445,16 @@
   color: var(--text-tertiary);
   cursor: pointer;
   font-size: 14px;
-  padding: var(--spacing-xs);
+  padding: 0;
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  flex-shrink: 0;
   border-radius: var(--radius-sm);
   transition: all var(--transition-fast);
-  line-height: 1;
 }
 
 .password-field-toggle:hover,
@@ -724,10 +771,16 @@
   color: var(--text-secondary);
   cursor: pointer;
   font-size: 14px;
-  padding: 4px 6px;
+  padding: 0;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  flex-shrink: 0;
   border-radius: var(--radius-sm);
   transition: all 0.2s;
-  line-height: 1;
 }
 
 .note-action-btn:hover {
@@ -802,10 +855,16 @@
   color: var(--text-secondary);
   cursor: pointer;
   font-size: 14px;
-  padding: 4px 6px;
+  padding: 0;
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  flex-shrink: 0;
   border-radius: var(--radius-sm);
   transition: all 0.2s;
-  line-height: 1;
 }
 
 .password-action-btn:hover {
@@ -865,10 +924,6 @@
 
 .sidebar-tab .tab-icon {
   font-size: 16px;
-}
-
-.sidebar-tab .tab-label {
-  font-weight: 500;
 }
 
 .sidebar-tab .tab-count {

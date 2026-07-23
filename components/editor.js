@@ -18,11 +18,19 @@ class Editor {
     // Save initial state
     this.saveState();
     
-    // Handle paste to clean up formatting
+    // Handle paste: preserve common formatting (bold, italic, links, lists,
+    // headings, code, blockquote) but strip anything that could carry scripts,
+    // remote loads, or visual baggage (styles, classes, fonts, dangerous URLs).
     this.editor.addEventListener('paste', (e) => {
       e.preventDefault();
-      const text = e.clipboardData.getData('text/plain');
-      document.execCommand('insertText', false, text);
+      const html = e.clipboardData.getData('text/html');
+      if (html && html.trim()) {
+        const safe = Editor.sanitizePastedHtml(html);
+        document.execCommand('insertHTML', false, safe);
+      } else {
+        const text = e.clipboardData.getData('text/plain');
+        document.execCommand('insertText', false, text);
+      }
     });
 
     // Handle link clicks with Cmd/Ctrl+Click
@@ -30,6 +38,26 @@ class Editor {
       if (e.target.tagName === 'A' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         require('electron').shell.openExternal(e.target.href);
+        return;
+      }
+
+      // Clicking anywhere on a task-item row (other than the checkbox itself)
+      // should focus the label and place the caret at the end. Without this,
+      // clicking the empty space to the right of a short label does nothing
+      // visible because the span only fills its content width.
+      const taskItem = e.target.closest && e.target.closest('.task-item');
+      if (taskItem && e.target.tagName !== 'INPUT') {
+        const label = taskItem.querySelector('.task-label');
+        if (label && e.target !== label && !label.contains(e.target)) {
+          e.preventDefault();
+          label.focus();
+          const sel = window.getSelection();
+          const r = document.createRange();
+          r.selectNodeContents(label);
+          r.collapse(false);
+          sel.removeAllRanges();
+          sel.addRange(r);
+        }
       }
     });
 
@@ -43,16 +71,16 @@ class Editor {
       }
     });
 
-    // Auto-convert URLs to links and handle first line heading
+    // Auto-convert URLs to links on input.
+    // Note: first-line-as-H1 auto-conversion was removed — title is now a
+    // separate input above the editor, so the body has no implicit heading.
     this.editor.addEventListener('input', (e) => {
       this.autoLinkUrls();
-      this.autoConvertFirstLineToHeading();
-      
-      // Save state for undo/redo (debounced)
+
       if (!this.isUndoRedoAction) {
         this.debouncedSaveState();
       }
-      
+
       if (this.onChange) {
         this.onChange();
       }
@@ -101,6 +129,35 @@ class Editor {
       if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'h') {
         e.preventDefault();
         this.toggleHighlight();
+        return;
+      }
+
+      // Cmd/Ctrl + Alt + 0/1/2/3 — 0 reverts to normal paragraph, 1/2/3 headings
+      if ((e.metaKey || e.ctrlKey) && e.altKey && !e.shiftKey) {
+        if (e.key === '0') { e.preventDefault(); this.clearBlockFormat(); return; }
+        if (e.key === '1') { e.preventDefault(); this.insertHeading(1); return; }
+        if (e.key === '2') { e.preventDefault(); this.insertHeading(2); return; }
+        if (e.key === '3') { e.preventDefault(); this.insertHeading(3); return; }
+      }
+
+      // Cmd/Ctrl + Shift + 7/8/9 for lists (ordered / unordered / task)
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey) {
+        if (e.key === '7') { e.preventDefault(); this.insertList('numbered'); return; }
+        if (e.key === '8') { e.preventDefault(); this.insertList('bullet'); return; }
+        if (e.key === '9') { e.preventDefault(); this.insertTaskList(); return; }
+      }
+
+      // Cmd/Ctrl + K to insert link
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key === 'k') {
+        e.preventDefault();
+        this.insertLink();
+        return;
+      }
+
+      // Cmd/Ctrl + E for inline code
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key === 'e') {
+        e.preventDefault();
+        this.insertCode();
         return;
       }
       
@@ -322,107 +379,47 @@ class Editor {
             const lineStart = text.lastIndexOf('\n', cursorPos - 1) + 1;
             const lineText = text.substring(lineStart, cursorPos);
             
-            // Check for heading patterns (# to ######)
+            // All the start-of-line block shortcuts share the same shape:
+            //  1. Match a marker (#, -, *, +, 1., 1), >) at the start of the line
+            //  2. Strip the marker characters from the text node
+            //  3. Delegate to insertHeading / insertList / insertBlockquote,
+            //     which now use document.execCommand and handle every nesting
+            //     case correctly.
+            const stripMarker = (textNode, lineStart, cursorPos) => {
+              const t = textNode.textContent;
+              textNode.textContent = t.substring(0, lineStart) + t.substring(cursorPos);
+              // Place cursor where the marker used to be.
+              const r = document.createRange();
+              r.setStart(textNode, lineStart);
+              r.collapse(true);
+              selection.removeAllRanges();
+              selection.addRange(r);
+            };
+
+            // # to ######  → headings
             const headingMatch = lineText.match(/^(#{1,6})$/);
             if (headingMatch) {
               e.preventDefault();
-              const level = headingMatch[1].length;
-              
-              // Remove the # characters
-              const beforeText = text.substring(0, lineStart);
-              const afterText = text.substring(cursorPos);
-              
-              // Get the parent node to replace
-              let parentNode = textNode.parentNode;
-              if (parentNode === this.editor) {
-                // Create heading
-                const heading = document.createElement(`h${level}`);
-                heading.textContent = '';
-                
-                // Replace text node
-                textNode.textContent = beforeText + afterText;
-                parentNode.insertBefore(heading, textNode);
-                
-                // Move cursor into heading
-                const newRange = document.createRange();
-                newRange.setStart(heading, 0);
-                newRange.collapse(true);
-                selection.removeAllRanges();
-                selection.addRange(newRange);
-                
-                this.saveState();
-                if (this.onChange) this.onChange();
-              }
+              stripMarker(textNode, lineStart, cursorPos);
+              this.insertHeading(headingMatch[1].length);
               return;
             }
-            
-            // Check for bullet list pattern (- or *)
-            const bulletMatch = lineText.match(/^[-*]$/);
+
+            // -, *, +  → bullet list
+            const bulletMatch = lineText.match(/^[-*+]$/);
             if (bulletMatch) {
               e.preventDefault();
-              
-              // Remove the - or * character
-              const beforeText = text.substring(0, lineStart);
-              const afterText = text.substring(cursorPos);
-              textNode.textContent = beforeText + afterText;
-              
-              // Create list
-              const list = document.createElement('ul');
-              const listItem = document.createElement('li');
-              listItem.textContent = '';
-              list.appendChild(listItem);
-              
-              // Insert list
-              const parentNode = textNode.parentNode;
-              if (parentNode === this.editor || parentNode.parentNode === this.editor) {
-                const insertPoint = parentNode === this.editor ? textNode : parentNode;
-                insertPoint.parentNode.insertBefore(list, insertPoint);
-                
-                // Move cursor into list item
-                const newRange = document.createRange();
-                newRange.setStart(listItem, 0);
-                newRange.collapse(true);
-                selection.removeAllRanges();
-                selection.addRange(newRange);
-                
-                this.saveState();
-                if (this.onChange) this.onChange();
-              }
+              stripMarker(textNode, lineStart, cursorPos);
+              this.insertList('bullet');
               return;
             }
-            
-            // Check for numbered list pattern (1. or 1))
+
+            // 1. or 1)  → numbered list
             const numberedMatch = lineText.match(/^(\d+)[.)]$/);
             if (numberedMatch) {
               e.preventDefault();
-              
-              // Remove the number and punctuation
-              const beforeText = text.substring(0, lineStart);
-              const afterText = text.substring(cursorPos);
-              textNode.textContent = beforeText + afterText;
-              
-              // Create list
-              const list = document.createElement('ol');
-              const listItem = document.createElement('li');
-              listItem.textContent = '';
-              list.appendChild(listItem);
-              
-              // Insert list
-              const parentNode = textNode.parentNode;
-              if (parentNode === this.editor || parentNode.parentNode === this.editor) {
-                const insertPoint = parentNode === this.editor ? textNode : parentNode;
-                insertPoint.parentNode.insertBefore(list, insertPoint);
-                
-                // Move cursor into list item
-                const newRange = document.createRange();
-                newRange.setStart(listItem, 0);
-                newRange.collapse(true);
-                selection.removeAllRanges();
-                selection.addRange(newRange);
-                
-                this.saveState();
-                if (this.onChange) this.onChange();
-              }
+              stripMarker(textNode, lineStart, cursorPos);
+              this.insertList('numbered');
               return;
             }
             
@@ -457,94 +454,68 @@ class Editor {
               container.appendChild(checkbox);
               container.appendChild(label);
               
-              // Insert task
-              const parentNode = textNode.parentNode;
-              if (parentNode === this.editor || parentNode.parentNode === this.editor) {
-                const insertPoint = parentNode === this.editor ? textNode : parentNode;
+              // Find the nearest block-level ancestor of textNode that's a
+              // direct child of the editor — that's where we insert the task.
+              let insertPoint = textNode;
+              while (insertPoint.parentNode && insertPoint.parentNode !== this.editor) {
+                insertPoint = insertPoint.parentNode;
+              }
+              if (insertPoint.parentNode === this.editor) {
                 insertPoint.parentNode.insertBefore(container, insertPoint);
-                
-                // Move cursor into label
+
                 setTimeout(() => {
                   label.focus();
                   const newRange = document.createRange();
-                  const textNode = label.firstChild;
-                  if (textNode) {
-                    newRange.setStart(textNode, 0);
+                  const labelText = label.firstChild;
+                  if (labelText) {
+                    newRange.setStart(labelText, 0);
                     newRange.collapse(true);
                     selection.removeAllRanges();
                     selection.addRange(newRange);
                   }
                 }, 0);
-                
+
                 this.saveState();
                 if (this.onChange) this.onChange();
               }
               return;
             }
             
-            // Check for blockquote pattern (>)
+            // > → blockquote
             const blockquoteMatch = lineText.match(/^>$/);
             if (blockquoteMatch) {
               e.preventDefault();
-              
-              // Remove the > character
-              const beforeText = text.substring(0, lineStart);
-              const afterText = text.substring(cursorPos);
-              textNode.textContent = beforeText + afterText;
-              
-              // Create blockquote
-              const blockquote = document.createElement('blockquote');
-              blockquote.textContent = '';
-              
-              // Insert blockquote
-              const parentNode = textNode.parentNode;
-              if (parentNode === this.editor || parentNode.parentNode === this.editor) {
-                const insertPoint = parentNode === this.editor ? textNode : parentNode;
-                insertPoint.parentNode.insertBefore(blockquote, insertPoint);
-                
-                // Move cursor into blockquote
-                const newRange = document.createRange();
-                newRange.setStart(blockquote, 0);
-                newRange.collapse(true);
-                selection.removeAllRanges();
-                selection.addRange(newRange);
-                
-                this.saveState();
-                if (this.onChange) this.onChange();
-              }
+              stripMarker(textNode, lineStart, cursorPos);
+              this.insertBlockquote();
               return;
             }
             
-            // Check for horizontal rule pattern (---)
+            // --- → horizontal rule
             const hrMatch = lineText.match(/^---$/);
             if (hrMatch) {
               e.preventDefault();
-              
-              // Remove the --- characters
               const beforeText = text.substring(0, lineStart);
               const afterText = text.substring(cursorPos);
               textNode.textContent = beforeText + afterText;
-              
-              // Create horizontal rule
-              const hr = document.createElement('hr');
-              
-              // Insert hr
-              const parentNode = textNode.parentNode;
-              if (parentNode === this.editor || parentNode.parentNode === this.editor) {
-                const insertPoint = parentNode === this.editor ? textNode : parentNode;
+
+              // Walk up to the closest direct child of the editor as the insertion anchor.
+              let insertPoint = textNode;
+              while (insertPoint.parentNode && insertPoint.parentNode !== this.editor) {
+                insertPoint = insertPoint.parentNode;
+              }
+              if (insertPoint.parentNode === this.editor) {
+                const hr = document.createElement('hr');
                 insertPoint.parentNode.insertBefore(hr, insertPoint);
-                
-                // Add line break after hr
+
                 const br = document.createElement('br');
                 hr.parentNode.insertBefore(br, hr.nextSibling);
-                
-                // Move cursor after hr
+
                 const newRange = document.createRange();
                 newRange.setStartAfter(br);
                 newRange.collapse(true);
                 selection.removeAllRanges();
                 selection.addRange(newRange);
-                
+
                 this.saveState();
                 if (this.onChange) this.onChange();
               }
@@ -684,66 +655,66 @@ class Editor {
             }
           }
           
-          // Check if we're in a task-label
-          if (node && node.classList && node.classList.contains('task-label')) {
-            // Check if task label is empty
-            if (!node.textContent.trim()) {
+          // Find the enclosing task-label (cursor may be inside a nested
+          // formatting tag like <strong> within the label).
+          const taskLabel = node && node.closest ? node.closest('.task-label') : null;
+          if (taskLabel) {
+            // Empty task → exit the task list and drop a new line in its place.
+            // textContent of a fresh label is just a ZWSP, which trims to ''.
+            if (!taskLabel.textContent.replace(/​/g, '').trim()) {
               e.preventDefault();
-              
-              // Remove the empty task item
-              const taskItem = node.parentNode;
-              if (taskItem && taskItem.parentNode) {
-                taskItem.parentNode.removeChild(taskItem);
-                
-                // Add a new line
-                const br = document.createElement('br');
-                const insertPoint = taskItem.nextSibling || taskItem.parentNode;
-                if (insertPoint.parentNode) {
-                  insertPoint.parentNode.insertBefore(br, insertPoint);
-                } else {
-                  this.editor.appendChild(br);
-                }
-                
-                // Move cursor to the new line
-                const newRange = document.createRange();
-                newRange.setStartAfter(br);
-                newRange.collapse(true);
-                selection.removeAllRanges();
-                selection.addRange(newRange);
+              const taskItem = taskLabel.parentNode;
+              const parent = taskItem && taskItem.parentNode;
+              if (!parent) return;
+
+              // Capture position BEFORE removing — nextSibling/parentNode of a
+              // detached node are both null, which is the bug we used to hit.
+              const anchor = taskItem.nextSibling;
+              parent.removeChild(taskItem);
+
+              const br = document.createElement('br');
+              if (anchor) {
+                parent.insertBefore(br, anchor);
+              } else {
+                parent.appendChild(br);
               }
-              
+
+              const newRange = document.createRange();
+              newRange.setStartAfter(br);
+              newRange.collapse(true);
+              selection.removeAllRanges();
+              selection.addRange(newRange);
+
               this.saveState();
               if (this.onChange) this.onChange();
               return;
             }
+
+            // Non-empty task → create a new task below.
             e.preventDefault();
-            
-            // Create a new task item
+
             const newContainer = document.createElement('div');
             newContainer.className = 'task-item';
             newContainer.style.display = 'flex';
             newContainer.style.alignItems = 'center';
             newContainer.style.marginBottom = '4px';
-            
+
             const newCheckbox = document.createElement('input');
             newCheckbox.type = 'checkbox';
             newCheckbox.style.marginRight = '8px';
-            
+
             const newLabel = document.createElement('span');
             newLabel.contentEditable = 'true';
             newLabel.className = 'task-label';
-            // Add a zero-width space to make the span focusable
             newLabel.innerHTML = '&#8203;';
-            
+
             newContainer.appendChild(newCheckbox);
             newContainer.appendChild(newLabel);
-            
-            // Insert the new task after the current task
-            const currentTask = node.parentNode;
+
+            const currentTask = taskLabel.parentNode;
             if (currentTask && currentTask.parentNode) {
               currentTask.parentNode.insertBefore(newContainer, currentTask.nextSibling);
-              
-              // Move cursor to the new task - use setTimeout to ensure DOM is updated
+
               setTimeout(() => {
                 newLabel.focus();
                 const newRange = document.createRange();
@@ -755,10 +726,84 @@ class Editor {
                   selection.addRange(newRange);
                 }
               }, 0);
-              
+
               if (this.onChange) {
                 this.onChange();
               }
+            }
+            return;
+          }
+        }
+      }
+
+      // Backspace at the start of a task-label → remove the whole task item.
+      // Gives users an obvious way to delete an unwanted checkbox.
+      if (e.key === 'Backspace') {
+        const selection = window.getSelection();
+        if (selection.rangeCount > 0) {
+          const range = selection.getRangeAt(0);
+          const startContainer = range.startContainer;
+          const taskLabel = (startContainer.nodeType === Node.ELEMENT_NODE
+            ? startContainer
+            : startContainer.parentElement)?.closest('.task-label');
+
+          if (taskLabel && range.collapsed) {
+            // "At the start" — accounting for a possible leading ZWSP.
+            const text = taskLabel.textContent || '';
+            const leadingZwsp = text.startsWith('​') ? 1 : 0;
+            const atStart = (startContainer === taskLabel && range.startOffset <= leadingZwsp)
+              || (startContainer.nodeType === Node.TEXT_NODE
+                  && startContainer === taskLabel.firstChild
+                  && range.startOffset <= leadingZwsp);
+
+            if (atStart) {
+              e.preventDefault();
+              const taskItem = taskLabel.parentNode;
+              const parent = taskItem && taskItem.parentNode;
+              if (!parent) return;
+
+              // Capture neighbors BEFORE removing — detached nodes have null siblings.
+              const prev = taskItem.previousSibling;
+              const next = taskItem.nextSibling;
+              parent.removeChild(taskItem);
+
+              this.editor.focus();
+              const newRange = document.createRange();
+
+              if (prev) {
+                // Land cursor at the end of the previous task's label, or right
+                // after the previous block.
+                const prevLabel = prev.nodeType === Node.ELEMENT_NODE
+                  ? prev.querySelector?.('.task-label')
+                  : null;
+                if (prevLabel) {
+                  prevLabel.focus();
+                  newRange.selectNodeContents(prevLabel);
+                  newRange.collapse(false);
+                } else {
+                  newRange.setStartAfter(prev);
+                  newRange.collapse(true);
+                }
+              } else if (next) {
+                // No previous: land at the start of whatever's next.
+                newRange.setStartBefore(next);
+                newRange.collapse(true);
+              } else {
+                // Editor is now empty — without an anchor element the caret
+                // (and the placeholder pseudo-element) won't render. Insert a
+                // <br> so contenteditable has a paint target.
+                const br = document.createElement('br');
+                this.editor.appendChild(br);
+                newRange.setStartBefore(br);
+                newRange.collapse(true);
+              }
+
+              selection.removeAllRanges();
+              selection.addRange(newRange);
+
+              this.saveState();
+              if (this.onChange) this.onChange();
+              return;
             }
           }
         }
@@ -786,58 +831,6 @@ class Editor {
           node.parentNode.insertBefore(temp.firstChild, node);
         }
         node.parentNode.removeChild(node);
-      }
-    }
-  }
-
-  autoConvertFirstLineToHeading() {
-    // Get the first child element or text node
-    const firstChild = this.editor.firstChild;
-    
-    if (!firstChild) return;
-    
-    // Check if it's a text node or a non-heading element
-    const isTextNode = firstChild.nodeType === Node.TEXT_NODE;
-    const isNotHeading = firstChild.nodeType === Node.ELEMENT_NODE && 
-                         !firstChild.tagName.match(/^H[1-6]$/);
-    
-    if (isTextNode || isNotHeading) {
-      const text = firstChild.textContent?.trim();
-      
-      // Only convert if there's text and it's not too long (reasonable heading length)
-      if (text && text.length > 0 && text.length < 100) {
-        // Check if this is the only content or if there's a line break after it
-        const hasLineBreak = this.editor.innerHTML.includes('<br>') || 
-                            this.editor.innerHTML.includes('</div>') ||
-                            this.editor.innerHTML.includes('</p>') ||
-                            this.editor.childNodes.length > 1;
-        
-        // Only convert to heading if it looks like a title (single line at the start)
-        if (!hasLineBreak || this.editor.childNodes.length === 1) {
-          // Save cursor position
-          const selection = window.getSelection();
-          const range = selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
-          const cursorOffset = range ? range.startOffset : 0;
-          
-          // Create h1 element
-          const h1 = document.createElement('h1');
-          h1.textContent = text;
-          
-          // Replace first child with h1
-          this.editor.replaceChild(h1, firstChild);
-          
-          // Restore cursor position
-          if (range && cursorOffset <= text.length) {
-            const newRange = document.createRange();
-            const textNode = h1.firstChild;
-            if (textNode) {
-              newRange.setStart(textNode, Math.min(cursorOffset, textNode.length));
-              newRange.collapse(true);
-              selection.removeAllRanges();
-              selection.addRange(newRange);
-            }
-          }
-        }
       }
     }
   }
@@ -892,184 +885,31 @@ class Editor {
   }
 
   insertHeading(level) {
-    // Ensure editor has focus first
+    // Delegate to formatBlock — handles cursor-on-line, selections, and nested
+    // parents correctly. Used to produce a "Heading" placeholder for the
+    // cursor-on-line case when text was a direct child of #editor.
     this.editor.focus();
-    
-    const selection = window.getSelection();
-    if (!selection.rangeCount) return;
-    
-    const range = selection.getRangeAt(0);
-    const selectedText = range.toString().trim();
-    
-    // Create heading element
-    const heading = document.createElement(`h${level}`);
-    
-    if (selectedText) {
-      // If text is selected, wrap it in heading
-      heading.textContent = selectedText;
-      range.deleteContents();
-      range.insertNode(heading);
-    } else {
-      // No selection - find the current line/block and convert it
-      let currentNode = range.startContainer;
-      
-      // If we're in a text node, get its parent
-      if (currentNode.nodeType === Node.TEXT_NODE) {
-        currentNode = currentNode.parentNode;
-      }
-      
-      // Find the block-level element containing the cursor
-      let blockElement = currentNode;
-      while (blockElement && blockElement !== this.editor && blockElement.parentNode !== this.editor) {
-        blockElement = blockElement.parentNode;
-      }
-      
-      // Check if we're in the first auto-generated H1
-      const isFirstH1 = blockElement === this.editor.firstChild && 
-                        blockElement.tagName === 'H1' &&
-                        this.editor.childNodes.length > 1;
-      
-      if (isFirstH1) {
-        // Don't format the auto-generated first line
-        return;
-      }
-      
-      if (blockElement && blockElement !== this.editor) {
-        // Convert the current block to a heading
-        const content = blockElement.textContent || 'Heading';
-        heading.textContent = content;
-        blockElement.parentNode.replaceChild(heading, blockElement);
-      } else {
-        // Insert new heading at cursor
-        heading.textContent = 'Heading';
-        range.insertNode(heading);
-      }
-    }
-    
-    // Add a line break after the heading if needed
-    if (!heading.nextSibling) {
-      const br = document.createElement('br');
-      heading.parentNode.insertBefore(br, heading.nextSibling);
-    }
-    
-    // Select the heading text for easy editing
-    const newRange = document.createRange();
-    newRange.selectNodeContents(heading);
-    selection.removeAllRanges();
-    selection.addRange(newRange);
-    
-    this.editor.focus();
-    
+    document.execCommand('formatBlock', false, `H${level}`);
+    this.saveState();
     if (this.onChange) {
       this.onChange();
     }
   }
 
   insertList(type) {
-    // Ensure editor has focus first
+    // Delegate to the browser's built-in list command. It correctly handles:
+    //  - cursor on a line of plain text → wraps that whole line as <li>
+    //  - selection across one or more lines → each line becomes an <li>
+    //  - cursor already inside a list of this type → toggles the list off
+    //  - cursor inside nested elements (<p>, <div>, etc.) → still works
+    // The manual implementation was producing "<ul><li>List item</li></ul>"
+    // placeholders for the cursor-on-line case and was splitting partial
+    // selections like "Hello" inside "Hello World" into a bullet plus orphan
+    // text, which looked like "just creates a new line".
     this.editor.focus();
-    
-    const selection = window.getSelection();
-    if (!selection.rangeCount) return;
-    
-    const range = selection.getRangeAt(0);
-    
-    // Check if we're already in a list of this type - if so, toggle it off
-    let currentNode = range.startContainer;
-    if (currentNode.nodeType === Node.TEXT_NODE) {
-      currentNode = currentNode.parentNode;
-    }
-    
-    // Find if we're in a list
-    let listElement = currentNode;
-    while (listElement && listElement !== this.editor) {
-      if (listElement.tagName === 'UL' || listElement.tagName === 'OL') {
-        break;
-      }
-      listElement = listElement.parentNode;
-    }
-    
-    const listTag = type === 'bullet' ? 'ul' : 'ol';
-    const isInSameTypeList = listElement && listElement.tagName === listTag.toUpperCase();
-    
-    if (isInSameTypeList) {
-      // Toggle off: Convert list back to normal text
-      this.removeList(listElement);
-      return;
-    }
-    
-    // Get selected lines
-    const lines = this.getSelectedLines(range);
-    
-    // Create list
-    const list = document.createElement(listTag);
-    
-    if (lines.length > 0) {
-      // Create list items for each line
-      lines.forEach(line => {
-        const listItem = document.createElement('li');
-        listItem.textContent = line;
-        list.appendChild(listItem);
-      });
-      
-      // Delete selected content and insert list
-      range.deleteContents();
-      range.insertNode(list);
-      
-      // Move cursor to end of last item
-      const lastItem = list.lastChild;
-      const newRange = document.createRange();
-      newRange.selectNodeContents(lastItem);
-      newRange.collapse(false);
-      selection.removeAllRanges();
-      selection.addRange(newRange);
-    } else {
-      // No selection - find current line and convert it
-      let blockElement = currentNode;
-      while (blockElement && blockElement !== this.editor && blockElement.parentNode !== this.editor) {
-        blockElement = blockElement.parentNode;
-      }
-      
-      // Check if we're in the first auto-generated H1
-      const isFirstH1 = blockElement === this.editor.firstChild && 
-                        blockElement.tagName === 'H1' &&
-                        this.editor.childNodes.length > 1;
-      
-      if (isFirstH1) {
-        // Don't format the auto-generated first line
-        return;
-      }
-      
-      const listItem = document.createElement('li');
-      
-      if (blockElement && blockElement !== this.editor && blockElement.textContent.trim()) {
-        // Convert current line to list item
-        listItem.textContent = blockElement.textContent;
-        list.appendChild(listItem);
-        blockElement.parentNode.replaceChild(list, blockElement);
-      } else {
-        // Insert new list at cursor
-        listItem.textContent = 'List item';
-        list.appendChild(listItem);
-        range.insertNode(list);
-      }
-      
-      // Move cursor into the list item
-      const newRange = document.createRange();
-      newRange.selectNodeContents(listItem);
-      selection.removeAllRanges();
-      selection.addRange(newRange);
-    }
-    
-    // Add a line break after the list if needed
-    if (!list.nextSibling) {
-      const br = document.createElement('br');
-      list.parentNode.insertBefore(br, list.nextSibling);
-    }
-    
-    this.editor.focus();
+    const command = type === 'bullet' ? 'insertUnorderedList' : 'insertOrderedList';
+    document.execCommand(command, false);
     this.saveState();
-    
     if (this.onChange) {
       this.onChange();
     }
@@ -1307,74 +1147,34 @@ class Editor {
   }
 
   insertBlockquote() {
-    // Ensure editor has focus first
+    // Same delegation pattern as insertHeading / insertList.
     this.editor.focus();
-    
-    const selection = window.getSelection();
-    if (!selection.rangeCount) return;
-    
-    const range = selection.getRangeAt(0);
-    const selectedText = range.toString().trim();
-    
-    const blockquote = document.createElement('blockquote');
-    
-    if (selectedText) {
-      // If text is selected, wrap it in blockquote
-      blockquote.textContent = selectedText;
-      range.deleteContents();
-      range.insertNode(blockquote);
-    } else {
-      // No selection - find current line and convert it
-      let currentNode = range.startContainer;
-      
-      if (currentNode.nodeType === Node.TEXT_NODE) {
-        currentNode = currentNode.parentNode;
-      }
-      
-      // Find the block-level element
-      let blockElement = currentNode;
-      while (blockElement && blockElement !== this.editor && blockElement.parentNode !== this.editor) {
-        blockElement = blockElement.parentNode;
-      }
-      
-      // Check if we're in the first auto-generated H1
-      const isFirstH1 = blockElement === this.editor.firstChild && 
-                        blockElement.tagName === 'H1' &&
-                        this.editor.childNodes.length > 1;
-      
-      if (isFirstH1) {
-        // Don't format the auto-generated first line
-        return;
-      }
-      
-      if (blockElement && blockElement !== this.editor && blockElement.textContent.trim()) {
-        // Convert current line to blockquote
-        blockquote.textContent = blockElement.textContent;
-        blockElement.parentNode.replaceChild(blockquote, blockElement);
-      } else {
-        // Insert new blockquote at cursor
-        blockquote.textContent = 'Quote';
-        range.insertNode(blockquote);
-      }
-    }
-    
-    // Add a line break after the blockquote if needed
-    if (!blockquote.nextSibling) {
-      const br = document.createElement('br');
-      blockquote.parentNode.insertBefore(br, blockquote.nextSibling);
-    }
-    
-    // Select the content for easy editing
-    const newRange = document.createRange();
-    newRange.selectNodeContents(blockquote);
-    selection.removeAllRanges();
-    selection.addRange(newRange);
-    
-    this.editor.focus();
-    
+    document.execCommand('formatBlock', false, 'BLOCKQUOTE');
+    this.saveState();
     if (this.onChange) {
       this.onChange();
     }
+  }
+
+  // Revert the current block (H1/H2/H3/BLOCKQUOTE/etc.) back to a paragraph.
+  // Also lifts the line out of any UL/OL it's in.
+  clearBlockFormat() {
+    this.editor.focus();
+    // First, exit any list the cursor is in by toggling it off.
+    const sel = window.getSelection();
+    if (sel.rangeCount) {
+      let node = sel.getRangeAt(0).startContainer;
+      if (node.nodeType === Node.TEXT_NODE) node = node.parentNode;
+      const inList = node && node.closest && node.closest('ul, ol');
+      if (inList) {
+        const cmd = inList.tagName === 'OL' ? 'insertOrderedList' : 'insertUnorderedList';
+        document.execCommand(cmd, false);
+      }
+    }
+    // Then format the block as a plain paragraph.
+    document.execCommand('formatBlock', false, 'P');
+    this.saveState();
+    if (this.onChange) this.onChange();
   }
 
   insertTable(rows = 3, cols = 3) {
@@ -1872,17 +1672,6 @@ class Editor {
       endNode = endNode.parentNode;
     }
     
-    // Check if we're selecting from the first H1 heading
-    const firstChild = this.editor.firstChild;
-    const isSelectingFromH1 = firstChild && 
-                               firstChild.tagName === 'H1' && 
-                               (startNode === firstChild || startNode.parentNode === firstChild);
-    
-    // If selecting from H1, expand selection to include it fully
-    if (isSelectingFromH1) {
-      range.setStartBefore(firstChild);
-    }
-    
     const container = document.createElement('div');
     container.appendChild(range.cloneContents());
     
@@ -2324,6 +2113,144 @@ class Editor {
     if (this.onChange) {
       this.onChange();
     }
+  }
+
+  // Find-in-note: walks text nodes inside the editor and wraps matches with
+  // <span class="find-match">. Returns the number of matches found. The active
+  // match (highlighted differently) is tracked via `activeMatchIndex`.
+  findInNote(query) {
+    this.clearFindHighlights();
+    if (!query) {
+      this.activeMatchIndex = -1;
+      return 0;
+    }
+
+    const matcher = query.toLowerCase();
+    const walker = document.createTreeWalker(this.editor, NodeFilter.SHOW_TEXT, {
+      acceptNode: (node) => {
+        // Skip text inside an existing .find-match — there shouldn't be any
+        // after clearFindHighlights, but be defensive.
+        if (node.parentElement && node.parentElement.classList?.contains('find-match')) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        return node.nodeValue && node.nodeValue.toLowerCase().includes(matcher)
+          ? NodeFilter.FILTER_ACCEPT
+          : NodeFilter.FILTER_REJECT;
+      }
+    });
+
+    const textNodes = [];
+    let n;
+    while ((n = walker.nextNode())) textNodes.push(n);
+
+    for (const textNode of textNodes) {
+      const text = textNode.nodeValue;
+      const lower = text.toLowerCase();
+      const frag = document.createDocumentFragment();
+      let cursor = 0;
+      let idx;
+      while ((idx = lower.indexOf(matcher, cursor)) !== -1) {
+        if (idx > cursor) frag.appendChild(document.createTextNode(text.slice(cursor, idx)));
+        const span = document.createElement('span');
+        span.className = 'find-match';
+        span.textContent = text.slice(idx, idx + query.length);
+        frag.appendChild(span);
+        cursor = idx + query.length;
+      }
+      if (cursor < text.length) frag.appendChild(document.createTextNode(text.slice(cursor)));
+      textNode.parentNode.replaceChild(frag, textNode);
+    }
+
+    const matches = this.editor.querySelectorAll('.find-match');
+    this.activeMatchIndex = matches.length > 0 ? 0 : -1;
+    this._setActiveMatch();
+    return matches.length;
+  }
+
+  nextMatch() {
+    const matches = this.editor.querySelectorAll('.find-match');
+    if (!matches.length) return;
+    this.activeMatchIndex = (this.activeMatchIndex + 1) % matches.length;
+    this._setActiveMatch();
+  }
+
+  prevMatch() {
+    const matches = this.editor.querySelectorAll('.find-match');
+    if (!matches.length) return;
+    this.activeMatchIndex = (this.activeMatchIndex - 1 + matches.length) % matches.length;
+    this._setActiveMatch();
+  }
+
+  _setActiveMatch() {
+    const matches = this.editor.querySelectorAll('.find-match');
+    matches.forEach((m, i) => {
+      m.classList.toggle('active', i === this.activeMatchIndex);
+    });
+    if (this.activeMatchIndex >= 0 && matches[this.activeMatchIndex]) {
+      matches[this.activeMatchIndex].scrollIntoView({ block: 'center', behavior: 'smooth' });
+    }
+  }
+
+  // Remove our wrappers without touching the user's own <mark> tags.
+  clearFindHighlights() {
+    const spans = this.editor.querySelectorAll('.find-match');
+    spans.forEach(span => {
+      const parent = span.parentNode;
+      while (span.firstChild) parent.insertBefore(span.firstChild, span);
+      parent.removeChild(span);
+      parent.normalize();
+    });
+    this.activeMatchIndex = -1;
+  }
+
+  // Sanitize pasted HTML. Allowlist is intentionally narrow: text formatting
+  // tags, lists, headings, links, code. Everything else (scripts, iframes,
+  // images, styles, classes, event handlers) gets stripped. Only http(s)/mailto
+  // links survive — javascript: and data: are dropped.
+  static sanitizePastedHtml(html) {
+    const ALLOWED_TAGS = new Set([
+      'B', 'STRONG', 'I', 'EM', 'U', 'S', 'STRIKE', 'DEL',
+      'CODE', 'PRE', 'KBD', 'MARK',
+      'A',
+      'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
+      'UL', 'OL', 'LI',
+      'P', 'BR', 'BLOCKQUOTE', 'HR',
+      'SPAN', 'DIV'
+    ]);
+    const SAFE_LINK = /^(https?:|mailto:)/i;
+
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+
+    const walk = (node) => {
+      const children = Array.from(node.childNodes);
+      for (const child of children) {
+        if (child.nodeType === Node.ELEMENT_NODE) {
+          const tag = child.tagName;
+          if (!ALLOWED_TAGS.has(tag)) {
+            // Replace disallowed element with its text content so we don't
+            // silently lose words.
+            const text = document.createTextNode(child.textContent || '');
+            node.replaceChild(text, child);
+            continue;
+          }
+          // Strip all attributes except href on <a>
+          for (const attr of Array.from(child.attributes)) {
+            if (tag === 'A' && attr.name === 'href' && SAFE_LINK.test(attr.value)) continue;
+            child.removeAttribute(attr.name);
+          }
+          // Drop empty <a> with no href
+          if (tag === 'A' && !child.getAttribute('href')) {
+            while (child.firstChild) node.insertBefore(child.firstChild, child);
+            node.removeChild(child);
+            continue;
+          }
+          walk(child);
+        }
+      }
+    };
+
+    walk(doc.body);
+    return doc.body.innerHTML;
   }
 }
 

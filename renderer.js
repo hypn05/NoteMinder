@@ -29,6 +29,9 @@ const searchInput = document.getElementById('search-input');
 const notesContainer = document.getElementById('notes-container');
 const editorElement = document.getElementById('editor');
 const newNoteBtn = document.getElementById('new-note-btn');
+const noteTitleInput = document.getElementById('note-title');
+const wordCountEl = document.getElementById('word-count');
+const charCountEl = document.getElementById('char-count');
 
 // Initialize
 async function init() {
@@ -159,7 +162,47 @@ function setupEventListeners() {
   
   // Import markdown
   document.getElementById('btn-import-md').addEventListener('click', importMarkdown);
-  
+
+  // Search button (alternative to ⌘⇧Space)
+  const btnSearch = document.getElementById('btn-search');
+  if (btnSearch) {
+    btnSearch.addEventListener('click', () => {
+      ipcRenderer.send('open-search-window');
+    });
+  }
+
+  // Shortcuts button — opens the keyboard-shortcuts cheat sheet
+  const btnShortcuts = document.getElementById('btn-shortcuts');
+  if (btnShortcuts) {
+    btnShortcuts.addEventListener('click', showShortcutsModal);
+  }
+
+  // Title input — updates currentNote and triggers debounced save
+  if (noteTitleInput) {
+    noteTitleInput.addEventListener('input', () => {
+      saveCurrentNote();
+    });
+    noteTitleInput.addEventListener('blur', flushPendingSave);
+    // Enter in title moves focus to editor body
+    noteTitleInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        editor.focus();
+      }
+    });
+  }
+
+  // Flush pending save when window loses focus or before unload
+  window.addEventListener('blur', flushPendingSave);
+  window.addEventListener('beforeunload', flushPendingSave);
+  editorElement.addEventListener('blur', flushPendingSave);
+
+  // Word/character count updates
+  editorElement.addEventListener('input', updateWordCount);
+
+  // Find-in-note bar wiring
+  setupFindBar();
+
   // Drag and drop for images
   editorElement.addEventListener('dragover', (e) => {
     e.preventDefault();
@@ -174,6 +217,18 @@ function setupEventListeners() {
       }
     }
     saveCurrentNote();
+  });
+
+  // Press `h` to collapse the sidebar when not typing in an editable field.
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'h' || e.metaKey || e.ctrlKey || e.altKey) return;
+    const t = e.target;
+    const tag = t && t.tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || (t && t.isContentEditable)) return;
+    if (!isCollapsed) {
+      e.preventDefault();
+      toggleSidebar();
+    }
   });
 }
 
@@ -211,7 +266,11 @@ function setupIpcListeners() {
     }
   });
   
-  ipcRenderer.on('open-note', (event, noteId) => {
+  ipcRenderer.on('open-note', async (event, noteId) => {
+    // Refresh from disk first — the in-memory `notes` may be stale if a note
+    // was added/edited since the renderer loaded, in which case `find` would
+    // return undefined and leave the previously-opened note visible.
+    await loadNotes();
     const note = notes.find(n => n.id === noteId);
     if (note) {
       if (isCollapsed) {
@@ -286,7 +345,59 @@ function toggleSidebar() {
 
 async function loadNotes() {
   notes = await ipcRenderer.invoke('get-notes');
+  if (migrateNotesToTitleField(notes)) {
+    await ipcRenderer.invoke('save-notes', notes);
+  }
   renderNotes();
+}
+
+// One-shot migration: pre-existing notes have title baked into content as an
+// auto-generated H1 (or just the first line). Lift that into a real `title`
+// field and remove it from content so the editor body and the title input are
+// fully decoupled. Returns true if anything was migrated (so caller persists).
+function migrateNotesToTitleField(allNotes) {
+  let changed = false;
+  for (const note of allNotes) {
+    if (typeof note.title === 'string') continue;
+    const { title, content } = extractTitleFromContent(note.content || '');
+    note.title = title;
+    note.content = content;
+    changed = true;
+  }
+  return changed;
+}
+
+function extractTitleFromContent(html) {
+  const tmp = document.createElement('div');
+  tmp.innerHTML = html || '';
+
+  // Skip leading whitespace-only text nodes
+  let first = tmp.firstChild;
+  while (first && first.nodeType === Node.TEXT_NODE && !first.textContent.trim()) {
+    first = first.nextSibling;
+  }
+
+  if (first && first.nodeType === Node.ELEMENT_NODE && /^H[1-6]$/.test(first.tagName)) {
+    const title = (first.textContent || '').trim();
+    first.remove();
+    return { title, content: tmp.innerHTML };
+  }
+
+  if (first && first.nodeType === Node.TEXT_NODE) {
+    const text = first.textContent;
+    const newlineIdx = text.indexOf('\n');
+    if (newlineIdx === -1) {
+      const title = text.trim();
+      first.remove();
+      return { title, content: tmp.innerHTML };
+    }
+    const title = text.slice(0, newlineIdx).trim();
+    first.textContent = text.slice(newlineIdx + 1);
+    return { title, content: tmp.innerHTML };
+  }
+
+  // No clear title source — preserve content, leave title empty
+  return { title: '', content: html || '' };
 }
 
 async function loadPasswords() {
@@ -482,26 +593,39 @@ function reorderNotes(draggedNoteId, targetNoteId, insertBefore) {
 function createNewNote() {
   const note = {
     id: Date.now().toString(),
+    title: '',
     content: '',
     backgroundColor: null,
     created: new Date().toISOString(),
     updated: new Date().toISOString(),
     reminders: []
   };
-  
+
   notes.unshift(note);
   saveNotes();
   openNote(note);
   renderNotes();
-  
+
   if (isCollapsed) {
     toggleSidebar();
+  }
+
+  // Focus title input so user can immediately name the note
+  if (noteTitleInput) {
+    noteTitleInput.focus();
   }
 }
 
 function openNote(note) {
+  // Flush any pending save for the previous note before switching
+  flushPendingSave();
+
   currentNote = note;
+  if (noteTitleInput) {
+    noteTitleInput.value = note.title || '';
+  }
   editor.setContent(note.content);
+  updateWordCount();
   renderNotes();
   
   // Apply background color to editor
@@ -554,30 +678,232 @@ function openNote(note) {
   }
 }
 
+// Debounce disk writes — every keystroke used to write the whole notes.json.
+// Keep in-memory currentNote updated immediately so reads stay consistent;
+// only the persist + sidebar re-render are debounced.
+let saveTimeoutId = null;
+const SAVE_DEBOUNCE_MS = 400;
+
 function saveCurrentNote() {
   if (!currentNote) return;
-  
+
   currentNote.content = editor.getContent();
+  if (noteTitleInput) {
+    currentNote.title = noteTitleInput.value;
+  }
   currentNote.updated = new Date().toISOString();
-  
+
+  clearTimeout(saveTimeoutId);
+  saveTimeoutId = setTimeout(() => {
+    saveTimeoutId = null;
+    saveNotes();
+    renderNotes();
+  }, SAVE_DEBOUNCE_MS);
+}
+
+function flushPendingSave() {
+  if (saveTimeoutId === null) return;
+  clearTimeout(saveTimeoutId);
+  saveTimeoutId = null;
   saveNotes();
   renderNotes();
+}
+
+function updateWordCount() {
+  if (!wordCountEl || !charCountEl) return;
+  const text = editor ? editor.getTextContent() : '';
+  const chars = text.length;
+  const words = text.trim() ? text.trim().split(/\s+/).length : 0;
+  wordCountEl.textContent = `${words} ${words === 1 ? 'word' : 'words'}`;
+  charCountEl.textContent = `${chars} ${chars === 1 ? 'character' : 'characters'}`;
+}
+
+function setupFindBar() {
+  const bar = document.getElementById('find-bar');
+  const input = document.getElementById('find-input');
+  const counter = document.getElementById('find-counter');
+  const prev = document.getElementById('find-prev');
+  const next = document.getElementById('find-next');
+  const close = document.getElementById('find-close');
+  if (!bar || !input) return;
+
+  const openBar = () => {
+    bar.classList.remove('hidden');
+    input.focus();
+    input.select();
+    if (input.value) runFind();
+  };
+
+  const closeBar = () => {
+    editor.clearFindHighlights();
+    bar.classList.add('hidden');
+    counter.textContent = '0 / 0';
+    editor.focus();
+  };
+
+  const runFind = () => {
+    const total = editor.findInNote(input.value);
+    counter.textContent = total > 0 ? `1 / ${total}` : '0 / 0';
+  };
+
+  const updateCounter = () => {
+    const matches = editorElement.querySelectorAll('.find-match');
+    const total = matches.length;
+    const current = total > 0 ? (editor.activeMatchIndex + 1) : 0;
+    counter.textContent = `${current} / ${total}`;
+  };
+
+  input.addEventListener('input', runFind);
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (e.shiftKey) editor.prevMatch();
+      else editor.nextMatch();
+      updateCounter();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      closeBar();
+    }
+  });
+
+  prev.addEventListener('click', () => { editor.prevMatch(); updateCounter(); });
+  next.addEventListener('click', () => { editor.nextMatch(); updateCounter(); });
+  close.addEventListener('click', closeBar);
+
+  // Cmd/Ctrl+F anywhere in the renderer opens the find bar.
+  document.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key === 'f') {
+      if (isCollapsed) return; // editor not visible
+      e.preventDefault();
+      openBar();
+    }
+    // Cmd/Ctrl + / opens the shortcuts cheat sheet
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key === '/') {
+      e.preventDefault();
+      showShortcutsModal();
+    }
+  });
+}
+
+function showShortcutsModal() {
+  const isMac = navigator.platform.toLowerCase().includes('mac');
+  const mod = isMac ? '⌘' : 'Ctrl';
+  const alt = isMac ? '⌥' : 'Alt';
+  const shift = '⇧';
+
+  const sections = [
+    {
+      title: 'Formatting',
+      shortcuts: [
+        [`${mod} B`, 'Bold'],
+        [`${mod} I`, 'Italic'],
+        [`${mod} U`, 'Underline'],
+        [`${mod} ${shift} X`, 'Strikethrough'],
+        [`${mod} ${shift} H`, 'Highlight'],
+        [`${mod} E`, 'Inline code'],
+        [`${mod} K`, 'Insert link'],
+      ],
+    },
+    {
+      title: 'Blocks',
+      shortcuts: [
+        [`${mod} ${alt} 0`, 'Normal text'],
+        [`${mod} ${alt} 1`, 'Heading 1'],
+        [`${mod} ${alt} 2`, 'Heading 2'],
+        [`${mod} ${alt} 3`, 'Heading 3'],
+        [`${mod} ${shift} 7`, 'Numbered list'],
+        [`${mod} ${shift} 8`, 'Bullet list'],
+        [`${mod} ${shift} 9`, 'Task list'],
+      ],
+    },
+    {
+      title: 'Editing',
+      shortcuts: [
+        [`${mod} Z`, 'Undo'],
+        [`${mod} ${shift} Z`, 'Redo'],
+        [`Tab / ${shift} Tab`, 'Indent / outdent list item'],
+        [`Enter (empty list/task)`, 'Exit the list'],
+        [`Backspace (start of task)`, 'Remove the checkbox'],
+      ],
+    },
+    {
+      title: 'Markdown shortcuts (type then space)',
+      shortcuts: [
+        ['# … ######', 'Heading 1 – 6'],
+        ['- / * / +', 'Bullet list'],
+        ['1.', 'Numbered list'],
+        ['[ ] / [x]', 'Task item'],
+        ['>', 'Blockquote'],
+        ['---', 'Horizontal rule'],
+        ['**text**', 'Bold'],
+        ['*text*', 'Italic'],
+        ['~~text~~', 'Strikethrough'],
+        ['==text==', 'Highlight'],
+        ['`text`', 'Inline code'],
+      ],
+    },
+    {
+      title: 'Navigation',
+      shortcuts: [
+        [`${mod} F`, 'Find in note'],
+        [`${mod} ${shift} Space`, 'Open search'],
+        [`${mod} /`, 'Show this shortcuts panel'],
+        [`H`, 'Collapse the sidebar (when not typing)'],
+        [`Esc`, 'Close search / find / modal'],
+      ],
+    },
+  ];
+
+  const content = document.createElement('div');
+  content.className = 'shortcuts-panel';
+
+  sections.forEach(({ title, shortcuts }) => {
+    const section = document.createElement('div');
+    section.className = 'shortcuts-section';
+
+    const h = document.createElement('h3');
+    h.className = 'shortcuts-section-title';
+    h.textContent = title;
+    section.appendChild(h);
+
+    const table = document.createElement('div');
+    table.className = 'shortcuts-table';
+    shortcuts.forEach(([keys, desc]) => {
+      const row = document.createElement('div');
+      row.className = 'shortcuts-row';
+      const kbd = document.createElement('span');
+      kbd.className = 'shortcuts-keys';
+      kbd.textContent = keys;
+      const label = document.createElement('span');
+      label.className = 'shortcuts-desc';
+      label.textContent = desc;
+      row.appendChild(kbd);
+      row.appendChild(label);
+      table.appendChild(row);
+    });
+    section.appendChild(table);
+    content.appendChild(section);
+  });
+
+  modal.create('Keyboard Shortcuts', content);
 }
 
 function deleteNote(note) {
   if (confirm('Delete this note?')) {
     notes = notes.filter(n => n.id !== note.id);
     saveNotes();
-    
+
     if (currentNote && currentNote.id === note.id) {
       if (notes.length > 0) {
         openNote(notes[0]);
       } else {
         currentNote = null;
         editor.clear();
+        if (noteTitleInput) noteTitleInput.value = '';
+        updateWordCount();
       }
     }
-    
+
     renderNotes();
   }
 }
@@ -595,6 +921,9 @@ function setupAllDropdowns() {
     {
       buttonId: 'heading-dropdown',
       items: {
+        'Normal text': () => {
+          if (editor) editor.clearBlockFormat();
+        },
         'H1': () => {
           if (editor) editor.insertHeading(1);
         },
@@ -1320,11 +1649,24 @@ function showReminderModal(note) {
 
 async function importMarkdown() {
   const result = await ipcRenderer.invoke('import-markdown');
-  if (result.success) {
-    const html = markdownToHtml(result.content);
-    editor.execCommand('insertHTML', html);
-    saveCurrentNote();
+  if (!result.success) return;
+
+  const html = markdownToHtml(result.content);
+
+  // If imported content starts with an H1 and the current note has no title,
+  // lift the H1 into the title field and import only the body.
+  if (currentNote && !((currentNote.title || '').trim())) {
+    const { title, content } = extractTitleFromContent(html);
+    if (title) {
+      noteTitleInput.value = title;
+      editor.execCommand('insertHTML', content);
+      saveCurrentNote();
+      return;
+    }
   }
+
+  editor.execCommand('insertHTML', html);
+  saveCurrentNote();
 }
 
 function markdownToHtml(markdown) {

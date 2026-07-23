@@ -47,14 +47,12 @@
           
           <!-- Tabs -->
           <div class="sidebar-tabs">
-            <button class="sidebar-tab active" data-tab="notes">
+            <button class="sidebar-tab active" data-tab="notes" title="Notes">
               <span class="tab-icon">📝</span>
-              <span class="tab-label">Notes</span>
               <span class="tab-count" id="notes-count">0</span>
             </button>
-            <button class="sidebar-tab" data-tab="passwords">
+            <button class="sidebar-tab" data-tab="passwords" title="Passwords">
               <span class="tab-icon">🔐</span>
-              <span class="tab-label">Passwords</span>
               <span class="tab-count" id="passwords-count">0</span>
             </button>
           </div>
@@ -85,7 +83,14 @@
     <div id="editor-container">
       <!-- Editor Header -->
       <div id="editor-header">
+        <input id="note-title" class="note-title-input" type="text" placeholder="Untitled" spellcheck="false" />
         <div id="editor-actions">
+          <button id="btn-shortcuts" class="btn btn-icon" title="Keyboard Shortcuts (⌘/)">
+            ⌨️
+          </button>
+          <button id="btn-search" class="btn btn-icon" title="Search (⌘⇧Space)">
+            🔍
+          </button>
           <button id="btn-color" class="btn btn-icon" title="Background Color">
             🎨
           </button>
@@ -158,8 +163,24 @@
         </div>
       </div>
       
+      <!-- Find-in-note bar (hidden by default) -->
+      <div id="find-bar" class="find-bar hidden">
+        <input type="text" id="find-input" placeholder="Find in note…" spellcheck="false" />
+        <span id="find-counter" class="find-counter">0 / 0</span>
+        <button id="find-prev" class="btn btn-small" title="Previous (Shift+Enter)">↑</button>
+        <button id="find-next" class="btn btn-small" title="Next (Enter)">↓</button>
+        <button id="find-close" class="btn btn-small" title="Close (Esc)">✕</button>
+      </div>
+
       <!-- Editor Content -->
       <div id="editor" contenteditable="true" data-placeholder="Start typing your note..."></div>
+
+      <!-- Editor Footer (word/char count) -->
+      <div id="editor-footer" class="editor-footer">
+        <span id="word-count">0 words</span>
+        <span class="editor-footer-sep">·</span>
+        <span id="char-count">0 characters</span>
+      </div>
     </div>
   </div>
   

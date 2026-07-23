@@ -43,42 +43,48 @@ function setupEventListeners() {
 
 function handleSearch(e) {
   const query = e.target.value.trim();
-  
+
   if (!query) {
     showEmptyState();
     return;
   }
-  
+
   const lowerQuery = query.toLowerCase();
-  
-  // Filter notes by content
-  const matchedNotes = notes.filter(note => {
+
+  // Match notes on title OR content. Track titleMatch so title hits rank first.
+  const matchedNotes = notes.reduce((acc, note) => {
+    const title = (note.title || '').toLowerCase();
     const content = stripHtml(note.content).toLowerCase();
-    return content.includes(lowerQuery);
-  }).map(note => ({ type: 'note', data: note }));
-  
-  // Filter passwords by label
+    const titleMatch = title.includes(lowerQuery);
+    const contentMatch = content.includes(lowerQuery);
+    if (titleMatch || contentMatch) {
+      acc.push({ type: 'note', data: note, titleMatch });
+    }
+    return acc;
+  }, []);
+
   const matchedPasswords = passwords.filter(password => {
     const label = (password.label || '').toLowerCase();
     return label.includes(lowerQuery);
-  }).map(password => ({ type: 'password', data: password }));
-  
-  // Combine results
+  }).map(password => ({ type: 'password', data: password, titleMatch: true }));
+
   filteredResults = [...matchedNotes, ...matchedPasswords];
-  
-  // Sort: favorites first, then by updated/created date
+
+  // Sort: favorites first, then title matches above content matches, then recency.
   filteredResults.sort((a, b) => {
     const aFav = a.data.isFavorite || false;
     const bFav = b.data.isFavorite || false;
-    
     if (aFav && !bFav) return -1;
     if (!aFav && bFav) return 1;
-    
+
+    if (a.titleMatch && !b.titleMatch) return -1;
+    if (!a.titleMatch && b.titleMatch) return 1;
+
     const aDate = new Date(a.data.updated || a.data.created);
     const bDate = new Date(b.data.updated || b.data.created);
     return bDate - aDate;
   });
-  
+
   selectedIndex = filteredResults.length > 0 ? 0 : -1;
   renderResults(query);
 }
@@ -165,32 +171,26 @@ function createNoteResultItem(note, query, isSelected) {
   if (isSelected) {
     item.classList.add('selected');
   }
-  
-  // Get plain text content
-  let content = stripHtml(note.content);
-  
-  // Highlight search query in content
-  if (query) {
-    content = highlightText(content, query);
-  }
-  
-  // Truncate content if too long - shorter for cleaner look
-  if (content.length > 100) {
-    content = content.substring(0, 100) + '...';
-  }
-  
-  // Build icon
+
+  const rawTitle = (note.title || '').trim() || 'Untitled';
+  const title = query ? highlightText(rawTitle, query) : rawTitle;
+
+  let snippet = stripHtml(note.content).replace(/\s+/g, ' ').trim();
+  if (snippet.length > 120) snippet = snippet.substring(0, 120) + '…';
+  if (query && snippet) snippet = highlightText(snippet, query);
+
   let icon = '📝';
   if (note.isFavorite) {
     icon = '⭐';
   } else if (note.reminders && note.reminders.some(r => r.enabled)) {
     icon = '🔔';
   }
-  
+
   item.innerHTML = `
     <div class="result-icon">${icon}</div>
     <div class="result-details">
-      <div class="result-content">${content || 'Empty note'}</div>
+      <div class="result-title">${title}</div>
+      ${snippet ? `<div class="result-subtitle">${snippet}</div>` : ''}
     </div>
   `;
   
@@ -286,14 +286,36 @@ function closeWindow() {
 }
 
 function showEmptyState() {
-  resultsContainer.innerHTML = `
-    <div class="empty-state">
-      <div class="empty-state-icon">📝</div>
-      <div class="empty-state-text">Type to search notes and passwords</div>
-    </div>
-  `;
-  filteredResults = [];
-  selectedIndex = -1;
+  resultsContainer.innerHTML = '';
+
+  const recent = [...notes]
+    .sort((a, b) => new Date(b.updated || b.created) - new Date(a.updated || a.created))
+    .slice(0, 5);
+
+  if (recent.length === 0) {
+    resultsContainer.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-state-icon">📝</div>
+        <div class="empty-state-text">No notes yet</div>
+      </div>
+    `;
+    filteredResults = [];
+    selectedIndex = -1;
+    return;
+  }
+
+  const header = document.createElement('div');
+  header.className = 'results-section-header';
+  header.textContent = 'Recent';
+  resultsContainer.appendChild(header);
+
+  filteredResults = recent.map(note => ({ type: 'note', data: note, titleMatch: true }));
+  selectedIndex = 0;
+
+  filteredResults.forEach((result, index) => {
+    const item = createNoteResultItem(result.data, '', index === selectedIndex);
+    resultsContainer.appendChild(item);
+  });
 }
 
 function showToast(message, type = 'success') {

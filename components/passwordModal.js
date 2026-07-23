@@ -72,19 +72,19 @@ class PasswordModal {
       
       <div class="form-group">
         <label class="form-label">Username/Email</label>
-        <div style="display: flex; gap: 8px;">
-          <input type="text" id="pwd-modal-username" class="input" placeholder="username@example.com" value="${this.escapeHtml(data?.username || '')}" style="flex: 1;">
-          <button type="button" id="copy-username-btn" class="btn" style="padding: 8px 12px;" title="Copy username">📋</button>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <input type="text" id="pwd-modal-username" class="input" placeholder="username@example.com" value="${this.escapeHtml(data?.username || '')}" style="flex: 1; height: 36px;">
+          <button type="button" id="copy-username-btn" class="btn" style="height: 36px; width: 36px; padding: 0; display: inline-flex; align-items: center; justify-content: center; line-height: 1; flex-shrink: 0;" title="Copy username">📋</button>
         </div>
       </div>
       
       <div class="form-group">
         <label class="form-label">Password *</label>
-        <div style="display: flex; gap: 8px;">
-          <input type="password" id="pwd-modal-password" class="input" placeholder="Enter password" value="${this.escapeHtml(data?.password || '')}" required style="flex: 1;">
-          <button type="button" id="toggle-password-btn" class="btn" style="padding: 8px 12px;" title="Toggle visibility">👁️</button>
-          <button type="button" id="generate-password-btn" class="btn" style="padding: 8px 12px;" title="Generate password">🎲</button>
-          <button type="button" id="copy-password-btn" class="btn" style="padding: 8px 12px;" title="Copy password">📋</button>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <input type="password" id="pwd-modal-password" class="input" placeholder="Enter password" value="${this.escapeHtml(data?.password || '')}" required style="flex: 1; height: 36px;">
+          <button type="button" id="toggle-password-btn" class="btn" style="height: 36px; width: 36px; padding: 0; display: inline-flex; align-items: center; justify-content: center; line-height: 1; flex-shrink: 0;" title="Toggle visibility">👁️</button>
+          <button type="button" id="generate-password-btn" class="btn" style="height: 36px; width: 36px; padding: 0; display: inline-flex; align-items: center; justify-content: center; line-height: 1; flex-shrink: 0;" title="Generate password">🎲</button>
+          <button type="button" id="copy-password-btn" class="btn" style="height: 36px; width: 36px; padding: 0; display: inline-flex; align-items: center; justify-content: center; line-height: 1; flex-shrink: 0;" title="Copy password">📋</button>
         </div>
         <div id="password-strength" style="margin-top: 8px; font-size: 12px;"></div>
       </div>
@@ -99,9 +99,9 @@ class PasswordModal {
         <textarea id="pwd-modal-description" class="input" placeholder="Optional notes about this password" rows="3">${this.escapeHtml(data?.description || '')}</textarea>
       </div>
       
-      <div style="display: flex; gap: 10px; margin-top: 20px;">
-        <button type="submit" class="btn btn-primary" style="flex: 1;">${this.isEditMode ? 'Update Password' : 'Create Password'}</button>
-        <button type="button" id="cancel-btn" class="btn" style="padding: 8px 16px;">Cancel</button>
+      <div style="display: flex; gap: 10px; margin-top: 20px; align-items: center;">
+        <button type="submit" class="btn btn-primary" style="flex: 1; height: 36px; display: inline-flex; align-items: center; justify-content: center; line-height: 1;">${this.isEditMode ? 'Update Password' : 'Create Password'}</button>
+        <button type="button" id="cancel-btn" class="btn" style="height: 36px; padding: 0 16px; display: inline-flex; align-items: center; justify-content: center; line-height: 1;">Cancel</button>
         ${this.isEditMode ? '<button type="button" id="delete-btn" class="btn" style="padding: 8px 16px; background: var(--danger-color, #f44336);">Delete</button>' : ''}
       </div>
     `;

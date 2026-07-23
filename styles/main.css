@@ -248,13 +248,145 @@ button, input, textarea, select, a, [contenteditable] {
   padding: var(--spacing-md);
   border-bottom: 1px solid var(--border-color);
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
   align-items: center;
+  gap: var(--spacing-md);
+}
+
+.note-title-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: var(--text-primary);
+  font-size: 22px;
+  font-weight: 600;
+  padding: 4px 0;
+  -webkit-app-region: no-drag;
+}
+
+.note-title-input::placeholder {
+  color: var(--text-tertiary);
+  font-weight: 500;
 }
 
 #editor-actions {
   display: flex;
   gap: var(--spacing-sm);
+  flex-shrink: 0;
+}
+
+.editor-footer {
+  padding: 6px var(--spacing-lg);
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  background: var(--bg-secondary);
+  -webkit-app-region: no-drag;
+}
+
+.editor-footer-sep {
+  opacity: 0.5;
+}
+
+/* Find-in-note bar */
+.find-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px var(--spacing-md);
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+  -webkit-app-region: no-drag;
+}
+
+.find-bar.hidden {
+  display: none;
+}
+
+#find-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  padding: 4px 8px;
+  font-size: 13px;
+  outline: none;
+}
+
+#find-input:focus {
+  border-color: var(--accent-primary);
+}
+
+.find-counter {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  min-width: 48px;
+  text-align: center;
+}
+
+.find-match {
+  background: rgba(255, 230, 0, 0.35);
+  border-radius: 2px;
+}
+
+.find-match.active {
+  background: rgba(255, 165, 0, 0.7);
+  color: #000;
+}
+
+/* Keyboard shortcuts cheat sheet */
+.shortcuts-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.shortcuts-section-title {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.shortcuts-table {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.shortcuts-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 0;
+}
+
+.shortcuts-keys {
+  flex-shrink: 0;
+  min-width: 180px;
+  font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 3px 8px;
+  text-align: center;
+}
+
+.shortcuts-desc {
+  font-size: 13px;
+  color: var(--text-secondary);
 }
 
 #editor-toolbar {
@@ -371,6 +503,41 @@ button, input, textarea, select, a, [contenteditable] {
 #editor input[type="checkbox"] {
   margin-right: var(--spacing-sm);
   cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* Task list items. The label is a contenteditable span; without these styles
+   it has near-zero width when empty and the caret is invisible / clicks to the
+   right of the text don't focus it. (Checkbox spacing is set inline in JS.) */
+#editor .task-item {
+  display: flex;
+  align-items: center;
+  margin-bottom: 4px;
+  min-height: 24px;
+}
+
+#editor .task-label {
+  flex: 1;
+  min-width: 0;
+  min-height: 1.4em;
+  padding: 2px 4px;
+  line-height: 1.4;
+  outline: none;
+  cursor: text;
+  caret-color: var(--text-primary);
+  color: var(--text-primary);
+  border-radius: var(--radius-sm);
+}
+
+#editor .task-label:focus {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* Strike through completed tasks for a clearer visual */
+#editor .task-item input[type="checkbox"]:checked + .task-label {
+  text-decoration: line-through;
+  color: var(--text-tertiary);
+  caret-color: var(--text-tertiary);
 }
 
 /* Color picker */
@@ -473,6 +640,10 @@ select.input {
 
 .reminder-banner-icon {
   font-size: 32px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
   animation: pulse 2s ease-in-out infinite;
 }

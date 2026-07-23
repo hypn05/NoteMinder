@@ -42,24 +42,17 @@ class NoteCard {
     const contentArea = document.createElement('div');
     contentArea.className = 'note-card-content';
     
-    // Note preview - extract only the first element's text as title
-    const tempDiv = document.createElement('div');
-    tempDiv.innerHTML = this.note.content;
-    
-    // Remove password field containers before extracting text
-    const passwordFields = tempDiv.querySelectorAll('.password-field-container');
-    passwordFields.forEach(field => field.remove());
-    
-    // Get only the first non-empty child element's text
-    let titleText = '';
-    for (const child of tempDiv.childNodes) {
-      if (child.nodeType === Node.TEXT_NODE) {
-        const text = child.textContent?.trim();
-        if (text) {
-          titleText = text;
-          break;
-        }
-      } else if (child.nodeType === Node.ELEMENT_NODE) {
+    // Prefer the explicit title field. Fall back to extracting from content
+    // for un-migrated notes (defensive — migration normally runs first).
+    let titleText = (this.note.title || '').trim();
+    if (!titleText) {
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = this.note.content;
+
+      const passwordFields = tempDiv.querySelectorAll('.password-field-container');
+      passwordFields.forEach(field => field.remove());
+
+      for (const child of tempDiv.childNodes) {
         const text = child.textContent?.trim();
         if (text) {
           titleText = text;
@@ -67,10 +60,10 @@ class NoteCard {
         }
       }
     }
-    
+
     const preview = document.createElement('div');
     preview.className = 'note-card-title';
-    preview.textContent = titleText || 'Empty note';
+    preview.textContent = titleText || 'Untitled';
     if (textColor) {
       preview.style.color = textColor;
     }

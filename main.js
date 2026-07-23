@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu, dialog, Notification, shell, globalShortcut, systemPreferences } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, dialog, Notification, shell, globalShortcut, systemPreferences, powerMonitor, screen } = require('electron');
 const path = require('path');
 const Storage = require('./utils/storage');
 const ReminderManager = require('./utils/reminder');
@@ -33,11 +33,9 @@ if (process.platform === 'darwin') {
 
 function createWindow() {
   const settings = settingsStorage.read() || { theme: 'dark', stayInView: false, screenId: null };
-  
-  // Get screen dimensions
-  const { screen } = require('electron');
+
   const displays = screen.getAllDisplays();
-  
+
   // Find the selected screen or use primary display
   let targetDisplay = screen.getPrimaryDisplay();
   if (settings.screenId) {
@@ -46,20 +44,20 @@ function createWindow() {
       targetDisplay = savedDisplay;
     }
   }
-  
+
   currentScreenId = targetDisplay.id;
   const { width: screenWidth, height: screenHeight } = targetDisplay.workAreaSize;
   const { x: screenX, y: screenY } = targetDisplay.bounds;
-  
+
   // Start collapsed: 30px width, 80px height (arrow tab size)
   const collapsedWidth = 30;
   const collapsedHeight = 80;
-  
+
   mainWindow = new BrowserWindow({
     width: collapsedWidth,
     height: collapsedHeight,
-    x: 0,
-    y: 0,
+    x: screenX + screenWidth - collapsedWidth,
+    y: screenY + Math.floor((screenHeight - collapsedHeight) / 2),
     frame: false,
     transparent: true,
     alwaysOnTop: true,
@@ -74,12 +72,6 @@ function createWindow() {
   });
 
   mainWindow.loadFile('index.html');
-  
-  // Position window at right edge of screen, centered vertically
-  mainWindow.setPosition(
-    screenX + screenWidth - collapsedWidth, 
-    screenY + Math.floor((screenHeight - collapsedHeight) / 2)
-  );
 
   // Set window properties
   mainWindow.setAlwaysOnTop(true, 'floating');
@@ -118,21 +110,23 @@ function createSearchWindow() {
     return;
   }
 
-  const { screen } = require('electron');
   const primaryDisplay = screen.getPrimaryDisplay();
   const { width: screenWidth, height: screenHeight } = primaryDisplay.workAreaSize;
-  
-  // Create window in center of screen
+
   const windowWidth = 600;
   const windowHeight = 400;
-  
+
   searchWindow = new BrowserWindow({
     width: windowWidth,
     height: windowHeight,
     x: Math.floor((screenWidth - windowWidth) / 2),
-    y: Math.floor((screenHeight - windowHeight) / 2) - 100, // Slightly above center
+    y: Math.floor((screenHeight - windowHeight) / 2) - 100,
     frame: false,
     transparent: true,
+    // macOS draws a native shadow around the full window bounds; on a transparent
+    // window that shows up as a ghost rectangle below the visible content. The
+    // CSS box-shadow on .search-container already provides the visual shadow.
+    hasShadow: false,
     alwaysOnTop: true,
     resizable: false,
     skipTaskbar: true,
@@ -198,7 +192,6 @@ function createTray() {
 
 function updateTrayMenu() {
   const settings = settingsStorage.read() || { theme: 'dark', stayInView: false, screenId: null };
-  const { screen } = require('electron');
   const displays = screen.getAllDisplays();
   
   // Build update menu item if update is available
@@ -408,19 +401,19 @@ function updateTrayMenu() {
 
 function repositionWindow(screenId) {
   if (!mainWindow) return;
-  
-  const { screen } = require('electron');
+
   const displays = screen.getAllDisplays();
-  const targetDisplay = displays.find(d => d.id === screenId);
-  
-  if (!targetDisplay) return;
-  
-  currentScreenId = screenId;
+  let targetDisplay = displays.find(d => d.id === screenId);
+  // Fall back to primary if the saved screen is gone (monitor unplugged, etc.)
+  if (!targetDisplay) {
+    targetDisplay = screen.getPrimaryDisplay();
+  }
+
+  currentScreenId = targetDisplay.id;
   const bounds = mainWindow.getBounds();
   const { width: screenWidth, height: screenHeight } = targetDisplay.workAreaSize;
   const { x: screenX, y: screenY } = targetDisplay.bounds;
-  
-  // Position window at right edge of the target screen
+
   mainWindow.setBounds({
     x: screenX + screenWidth - bounds.width,
     y: screenY + Math.floor((screenHeight - bounds.height) / 2),
@@ -458,26 +451,23 @@ ipcMain.handle('save-passwords', (event, passwords) => {
 
 ipcMain.on('resize-window', (event, { width, height }) => {
   if (mainWindow) {
-    const { screen } = require('electron');
     const displays = screen.getAllDisplays();
-    
-    // Find the current screen
+
     let targetDisplay = displays.find(d => d.id === currentScreenId);
     if (!targetDisplay) {
       targetDisplay = screen.getPrimaryDisplay();
       currentScreenId = targetDisplay.id;
     }
-    
+
     const { width: screenWidth, height: screenHeight } = targetDisplay.workAreaSize;
     const { x: screenX, y: screenY } = targetDisplay.bounds;
-    
-    // Position window at right edge of screen, centered vertically
+
     mainWindow.setBounds({
       x: screenX + screenWidth - width,
       y: screenY + Math.floor((screenHeight - height) / 2),
       width: width,
       height: height
-    }, true); // animate parameter for smooth transition
+    });
   }
 });
 
@@ -581,6 +571,10 @@ ipcMain.on('close-search-window', () => {
   if (searchWindow) {
     searchWindow.hide();
   }
+});
+
+ipcMain.on('open-search-window', () => {
+  createSearchWindow();
 });
 
 // Security IPC Handlers
@@ -714,10 +708,26 @@ ipcMain.handle('reset-auth-session', () => {
   return true;
 });
 
+// Re-anchor the window to the right edge whenever screen geometry changes.
+// Without this the absolute position from the last setBounds becomes stale
+// after sleep/wake, monitor plug-unplug, resolution change, or workArea shift,
+// and the tab appears to "float" somewhere away from the edge (macOS only —
+// Windows' window manager tends to re-snap borderless windows automatically).
+function reanchorToCurrentScreen() {
+  if (mainWindow) {
+    repositionWindow(currentScreenId);
+  }
+}
+
 // App lifecycle
 app.whenReady().then(async () => {
   createWindow();
   createTray();
+
+  screen.on('display-metrics-changed', reanchorToCurrentScreen);
+  screen.on('display-added', reanchorToCurrentScreen);
+  screen.on('display-removed', reanchorToCurrentScreen);
+  powerMonitor.on('resume', reanchorToCurrentScreen);
   
   // Register global shortcut for search
   const searchShortcut = process.platform === 'darwin' ? 'Command+Shift+Space' : 'Control+Shift+Space';
@@ -757,7 +767,7 @@ app.whenReady().then(async () => {
     if (mainWindow) {
       mainWindow.webContents.send('check-reminders');
     }
-  });
+  }); 
   reminderManager.start();
   
   // Initialize update checker
