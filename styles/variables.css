@@ -52,11 +52,33 @@ body.light-theme {
   --bg-tertiary: rgba(235, 235, 245, 0.95);
   --bg-hover: rgba(225, 225, 240, 0.95);
   --bg-active: rgba(215, 215, 235, 0.95);
-  
+
   --text-primary: #1a1a1a;
   --text-secondary: #4a4a4a;
   --text-tertiary: #8a8a8a;
-  
+
   --border-color: rgba(0, 0, 0, 0.1);
   --shadow-color: rgba(0, 0, 0, 0.1);
+}
+
+/* Paper theme — warm, friendly, Notes/Notion-inspired. Same token set as
+   dark/light, just a different palette, so every component that already
+   themes itself through these variables gets it for free. */
+body.paper-theme {
+  --bg-primary: rgba(253, 250, 244, 0.97);
+  --bg-secondary: rgba(248, 241, 228, 0.97);
+  --bg-tertiary: rgba(241, 231, 212, 0.97);
+  --bg-hover: rgba(234, 220, 195, 0.97);
+  --bg-active: rgba(227, 210, 180, 0.97);
+
+  --text-primary: #3a3122;
+  --text-secondary: #6b5f4b;
+  --text-tertiary: #9c8f78;
+
+  --accent-primary: #c17f2a;
+  --accent-secondary: #a8672a;
+  --accent-hover: #d69240;
+
+  --border-color: rgba(60, 40, 10, 0.12);
+  --shadow-color: rgba(60, 40, 10, 0.12);
 }

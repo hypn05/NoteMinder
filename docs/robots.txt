@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://hypn05.github.io/NoteMinder/sitemap.xml

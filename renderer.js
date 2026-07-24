@@ -16,7 +16,9 @@ let clips = [];
 let currentNote = null;
 let currentPassword = null;
 let isCollapsed = true;
+let isDocked = true;
 let searchQuery = '';
+let activeTagFilter = null;
 let expandedSize = { width: 800, height: Math.floor(window.screen.availHeight * 0.8) };
 let tabDragMoved = false;
 
@@ -145,6 +147,7 @@ function setupEventListeners() {
 
   // Floating formatting toolbar that appears near selected text
   setupFormatToolbar();
+  setupNoteLinking();
 
   // Color picker
   document.getElementById('btn-color').addEventListener('click', showColorPicker);
@@ -155,6 +158,28 @@ function setupEventListeners() {
       showReminderModal(currentNote);
     }
   });
+
+  // Dock / undock toggle
+  const dockToggleBtn = document.getElementById('btn-dock-toggle');
+  if (dockToggleBtn) {
+    dockToggleBtn.addEventListener('click', () => {
+      ipcRenderer.send('toggle-dock-mode');
+    });
+  }
+
+  // Custom window controls (only visible/relevant while undocked)
+  const winClose = document.getElementById('win-close');
+  if (winClose) {
+    winClose.addEventListener('click', () => ipcRenderer.send('toggle-dock-mode'));
+  }
+  const winMinimize = document.getElementById('win-minimize');
+  if (winMinimize) {
+    winMinimize.addEventListener('click', () => ipcRenderer.send('window-minimize'));
+  }
+  const winMaximize = document.getElementById('win-maximize');
+  if (winMaximize) {
+    winMaximize.addEventListener('click', () => ipcRenderer.send('window-maximize-toggle'));
+  }
 
   // Search button (alternative to ⌘⇧Space)
   const btnSearch = document.getElementById('btn-search');
@@ -213,8 +238,9 @@ function setupEventListeners() {
   });
 
   // Press `h` to collapse the sidebar when not typing in an editable field.
+  // Only applies while docked — an undocked window has no collapsed state.
   document.addEventListener('keydown', (e) => {
-    if (e.key !== 'h' || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (!isDocked || e.key !== 'h' || e.metaKey || e.ctrlKey || e.altKey) return;
     const t = e.target;
     const tag = t && t.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || (t && t.isContentEditable)) return;
@@ -227,7 +253,7 @@ function setupEventListeners() {
   // Escape collapses the expanded window (unless a modal or the find bar
   // is on top of it, in which case its own Escape handler closes it instead)
   document.addEventListener('keydown', (e) => {
-    if (e.key !== 'Escape' || isCollapsed) return;
+    if (!isDocked || e.key !== 'Escape' || isCollapsed) return;
     if (document.querySelector('.modal-overlay')) return;
     const findBar = document.getElementById('find-bar');
     if (findBar && !findBar.classList.contains('hidden')) return;
@@ -254,6 +280,10 @@ function setupIpcListeners() {
 
   ipcRenderer.on('edge-changed', (event, edge) => {
     applyEdge(edge);
+  });
+
+  ipcRenderer.on('dock-mode-changed', (event, docked) => {
+    applyDockMode(docked);
   });
 
   ipcRenderer.on('theme-changed', (event, theme) => {
@@ -421,6 +451,26 @@ function setupWidthDragging() {
 function applyEdge(edge) {
   arrowTab.classList.toggle('left-edge', edge === 'left');
   document.body.classList.toggle('left-edge', edge === 'left');
+}
+
+function applyDockMode(docked) {
+  isDocked = docked;
+  document.body.classList.toggle('undocked', !docked);
+
+  const dockBtn = document.getElementById('btn-dock-toggle');
+  if (dockBtn) {
+    dockBtn.title = docked ? 'Undock into a normal window' : 'Dock back to the screen edge';
+  }
+
+  if (!docked) {
+    // Windowed mode always shows the full UI — there's no collapsed state.
+    // Main process already sized the window; just sync the visual classes.
+    isCollapsed = false;
+    sidebar.classList.remove('collapsed');
+    sidebar.classList.add('expanded');
+    arrowTab.classList.add('expanded');
+    document.body.classList.add('expanded');
+  }
 }
 
 function toggleSidebar() {
@@ -646,23 +696,65 @@ function switchTab(tabName) {
   document.getElementById('app').classList.toggle('wide-mode', tabName !== 'notes');
 }
 
+// Pulls #tags out of a note's text (anywhere in the body). Requires no
+// space between # and the tag so it can't be confused with "# Heading"
+// (which the editor converts to a real heading before this ever runs).
+function extractTags(content) {
+  const text = (content || '').replace(/<[^>]*>/g, ' ');
+  const matches = text.match(/#([a-zA-Z0-9_-]+)/g) || [];
+  return [...new Set(matches.map(t => t.slice(1).toLowerCase()))];
+}
+
+function renderTagFilters() {
+  const container = document.getElementById('tag-filters');
+  if (!container) return;
+
+  const allTags = new Set();
+  notes.forEach(note => extractTags(note.content).forEach(tag => allTags.add(tag)));
+
+  if (allTags.size === 0) {
+    container.classList.add('hidden');
+    container.innerHTML = '';
+    return;
+  }
+  container.classList.remove('hidden');
+
+  container.innerHTML = '';
+  [...allTags].sort().forEach(tag => {
+    const pill = document.createElement('button');
+    pill.className = 'tag-filter-pill';
+    if (activeTagFilter === tag) pill.classList.add('active');
+    pill.textContent = `#${tag}`;
+    pill.addEventListener('click', () => {
+      activeTagFilter = activeTagFilter === tag ? null : tag;
+      renderNotes();
+    });
+    container.appendChild(pill);
+  });
+}
+
 function renderNotes() {
   notesContainer.innerHTML = '';
-  
+
   // Update notes count
   const notesCount = document.getElementById('notes-count');
   if (notesCount) {
     notesCount.textContent = notes.length;
   }
-  
+
+  renderTagFilters();
+
   let filteredNotes = notes;
   if (searchQuery) {
-    filteredNotes = notes.filter(note => {
+    filteredNotes = filteredNotes.filter(note => {
       const content = note.content.replace(/<[^>]*>/g, '').toLowerCase();
       return content.includes(searchQuery.toLowerCase());
     });
   }
-  
+  if (activeTagFilter) {
+    filteredNotes = filteredNotes.filter(note => extractTags(note.content).includes(activeTagFilter));
+  }
+
   // Sort notes: favorites first, then by updated date
   filteredNotes.sort((a, b) => {
     // If one is favorite and the other isn't, favorite comes first
@@ -679,7 +771,7 @@ function renderNotes() {
     empty.className = 'empty-state';
     empty.innerHTML = `
       <div class="empty-state-icon">📝</div>
-      <div class="empty-state-text">${searchQuery ? 'No notes found' : 'No notes yet'}</div>
+      <div class="empty-state-text">${(searchQuery || activeTagFilter) ? 'No notes found' : 'No notes yet'}</div>
     `;
     notesContainer.appendChild(empty);
     return;
@@ -935,6 +1027,12 @@ function setupFindBar() {
       e.preventDefault();
       showShortcutsModal();
     }
+    // Cmd/Ctrl + N creates a new note (expands the sidebar if collapsed)
+    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key === 'n') {
+      if (document.querySelector('.modal-overlay')) return;
+      e.preventDefault();
+      createNewNote();
+    }
   });
 }
 
@@ -998,11 +1096,14 @@ function showShortcutsModal() {
     {
       title: 'Navigation',
       shortcuts: [
+        [`${mod} N`, 'New note'],
         [`${mod} F`, 'Find in note'],
         [`${mod} ${shift} Space`, 'Open search'],
+        [`:n (in search)`, 'Create a new note'],
+        [`${mod} ${shift} V`, 'Save clipboard as a clip, from anywhere'],
         [`${mod} /`, 'Show this shortcuts panel'],
         [`H`, 'Collapse the sidebar (when not typing)'],
-        [`Esc`, 'Close search / find / modal'],
+        [`Esc`, 'Close search / find / modal, or collapse the sidebar'],
       ],
     },
   ];
@@ -1064,6 +1165,188 @@ function deleteNote(note) {
 function handleSearch(e) {
   searchQuery = e.target.value;
   renderNotes();
+}
+
+// Typing [[ in the editor opens a note-picker; selecting one (or pressing
+// Enter/Tab) inserts a non-editable, clickable token that jumps straight
+// to that note. Links are stored by note id (data-note-link), so they
+// keep working even if the target note's title changes later.
+function setupNoteLinking() {
+  const popup = document.getElementById('link-autocomplete');
+  if (!popup) return;
+
+  let linkQuery = null;
+  let suggestions = [];
+  let selectedIndex = 0;
+
+  function getQueryAtCursor() {
+    const sel = window.getSelection();
+    if (!sel.rangeCount) return null;
+    const range = sel.getRangeAt(0);
+    if (!range.collapsed) return null;
+    const node = range.startContainer;
+    if (node.nodeType !== Node.TEXT_NODE) return null;
+    const textBefore = node.textContent.slice(0, range.startOffset);
+    const match = textBefore.match(/\[\[([^\[\]]*)$/);
+    if (!match) return null;
+    return { query: match[1], node, matchStart: range.startOffset - match[0].length, matchEnd: range.startOffset };
+  }
+
+  function closePopup() {
+    popup.classList.add('hidden');
+    popup.innerHTML = '';
+    linkQuery = null;
+  }
+
+  function updatePopupPosition() {
+    const sel = window.getSelection();
+    if (!sel.rangeCount) return;
+    const rect = sel.getRangeAt(0).getBoundingClientRect();
+    popup.style.top = `${rect.bottom + 6}px`;
+    popup.style.left = `${rect.left}px`;
+  }
+
+  function renderSuggestions() {
+    popup.innerHTML = '';
+    if (suggestions.length === 0) {
+      const item = document.createElement('div');
+      item.className = 'link-suggestion-item link-suggestion-empty';
+      item.textContent = 'No matching notes';
+      popup.appendChild(item);
+      return;
+    }
+    suggestions.forEach((entry, i) => {
+      const item = document.createElement('div');
+      item.className = 'link-suggestion-item';
+      if (entry.__createNew) item.classList.add('link-suggestion-create');
+      if (i === selectedIndex) item.classList.add('selected');
+      item.textContent = entry.__createNew ? `Create note "${entry.title}"` : (entry.title || 'Untitled');
+      item.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        selectSuggestion(entry);
+      });
+      popup.appendChild(item);
+    });
+  }
+
+  function insertNoteLink(note, q) {
+    const { node, matchStart, matchEnd } = q;
+    const text = node.textContent;
+    const before = text.slice(0, matchStart);
+    const after = text.slice(matchEnd);
+
+    const link = document.createElement('a');
+    link.href = '#';
+    link.className = 'note-link';
+    link.setAttribute('data-note-link', note.id);
+    link.setAttribute('contenteditable', 'false');
+    link.textContent = note.title || 'Untitled';
+
+    const beforeTextNode = document.createTextNode(before);
+    const afterTextNode = document.createTextNode(after || ' ');
+
+    const parent = node.parentNode;
+    parent.insertBefore(beforeTextNode, node);
+    parent.insertBefore(link, node);
+    parent.insertBefore(afterTextNode, node);
+    parent.removeChild(node);
+
+    const range = document.createRange();
+    range.setStart(afterTextNode, 0);
+    range.collapse(true);
+    const sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+
+    saveCurrentNote();
+  }
+
+  function selectSuggestion(entry) {
+    if (!linkQuery) return;
+    if (entry.__createNew) {
+      const newNote = {
+        id: Date.now().toString(),
+        title: entry.title,
+        content: '',
+        backgroundColor: null,
+        created: new Date().toISOString(),
+        updated: new Date().toISOString(),
+        reminders: []
+      };
+      notes.unshift(newNote);
+      saveNotes();
+      insertNoteLink(newNote, linkQuery);
+      renderNotes();
+    } else {
+      insertNoteLink(entry, linkQuery);
+    }
+    closePopup();
+  }
+
+  editorElement.addEventListener('input', () => {
+    const q = getQueryAtCursor();
+    if (!q) {
+      closePopup();
+      return;
+    }
+    linkQuery = q;
+
+    const lowerQuery = q.query.toLowerCase();
+    suggestions = notes
+      .filter(n => !currentNote || n.id !== currentNote.id)
+      .filter(n => (n.title || 'Untitled').toLowerCase().includes(lowerQuery))
+      .slice(0, 5);
+
+    const exactMatch = notes.some(n => (n.title || '').toLowerCase() === lowerQuery);
+    if (q.query.trim() && !exactMatch) {
+      suggestions.push({ __createNew: true, title: q.query.trim() });
+    }
+
+    selectedIndex = 0;
+    updatePopupPosition();
+    popup.classList.remove('hidden');
+    renderSuggestions();
+  });
+
+  editorElement.addEventListener('keydown', (e) => {
+    if (popup.classList.contains('hidden')) return;
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      selectedIndex = Math.min(selectedIndex + 1, Math.max(suggestions.length - 1, 0));
+      renderSuggestions();
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      selectedIndex = Math.max(selectedIndex - 1, 0);
+      renderSuggestions();
+    } else if (e.key === 'Enter' || e.key === 'Tab') {
+      if (suggestions.length > 0) {
+        e.preventDefault();
+        selectSuggestion(suggestions[selectedIndex]);
+      }
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      closePopup();
+    }
+  });
+
+  // Don't leave the popup stuck open if focus moves away without closing
+  // it explicitly (clicking elsewhere in the sidebar, switching notes, etc.)
+  editorElement.addEventListener('blur', closePopup);
+
+  // Clicking an inserted note-link jumps straight to that note
+  editorElement.addEventListener('click', (e) => {
+    const link = e.target.closest('a.note-link');
+    if (!link) return;
+    e.preventDefault();
+    const target = notes.find(n => n.id === link.getAttribute('data-note-link'));
+    if (target) {
+      openNote(target);
+    } else {
+      showMessage('That note no longer exists', 'error');
+    }
+  });
 }
 
 function setupFormatToolbar() {
@@ -2027,11 +2310,8 @@ function checkReminders() {
 }
 
 function applyTheme(theme) {
-  if (theme === 'light') {
-    document.body.classList.add('light-theme');
-  } else {
-    document.body.classList.remove('light-theme');
-  }
+  document.body.classList.toggle('light-theme', theme === 'light');
+  document.body.classList.toggle('paper-theme', theme === 'paper');
 }
 
 function showUpdateNotesModal(updateInfo) {

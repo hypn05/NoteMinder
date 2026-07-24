@@ -1,3 +1,4 @@
-title: NoteMinder
-description: A simple reminder app
-theme: jekyll-theme-cayman
+title: NoteMinder — Notes that live on the edge of your screen
+description: A free, open-source floating notes app for macOS, Windows and Linux with Spotlight-style search, wiki-style note linking, tags, reminders, and a password vault.
+url: https://hypn05.github.io
+baseurl: /NoteMinder
