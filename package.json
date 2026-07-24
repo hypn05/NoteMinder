@@ -18,10 +18,7 @@
   "license": "ISC",
   "devDependencies": {
     "electron": "^27.3.11",
-    "electron-builder": "^24.13.3"
-  },
-  "dependencies": {
-    "electron-log": "^5.4.3"
+    "electron-builder": "^26.15.3"
   },
   "build": {
     "appId": "com.noteminder.app",

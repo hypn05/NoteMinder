@@ -108,7 +108,11 @@ function handleSearch(e) {
     return clip.text.toLowerCase().includes(lowerQuery);
   }).map(clip => ({ type: 'clip', data: clip, titleMatch: false }));
 
-  filteredResults = [...matchedNotes, ...matchedPasswords, ...matchedClips];
+  const matchedLinks = notes.flatMap(extractLinksFromNote)
+    .filter(link => link.label.toLowerCase().includes(lowerQuery))
+    .map(link => ({ type: 'link', data: link, titleMatch: true }));
+
+  filteredResults = [...matchedLinks, ...matchedNotes, ...matchedPasswords, ...matchedClips];
 
   // Sort: favorites first, then title matches above content matches, then recency.
   filteredResults.sort((a, b) => {
@@ -174,6 +178,8 @@ function renderResults(query) {
       resultItem = createNoteResultItem(result.data, query, index === selectedIndex);
     } else if (result.type === 'password') {
       resultItem = createPasswordResultItem(result.data, query, index === selectedIndex);
+    } else if (result.type === 'link') {
+      resultItem = createLinkResultItem(result.data, query, index === selectedIndex, index);
     } else {
       resultItem = createClipResultItem(result.data, query, index === selectedIndex);
     }
@@ -189,6 +195,8 @@ function handleResultAction(result) {
     copyPassword(result.data);
   } else if (result.type === 'clip') {
     copyClip(result.data);
+  } else if (result.type === 'link') {
+    copyLink(result.data);
   }
 }
 
@@ -196,6 +204,46 @@ function copyClip(clip) {
   clipboard.writeText(clip.text);
   showToast('Copied to clipboard');
   setTimeout(() => closeWindow(), 500);
+}
+
+function copyLink(link) {
+  clipboard.writeText(link.url);
+  showToast('Link copied to clipboard');
+  setTimeout(() => closeWindow(), 500);
+}
+
+function createLinkResultItem(link, query, isSelected, index) {
+  const item = document.createElement('div');
+  item.className = 'result-item';
+  if (isSelected) {
+    item.classList.add('selected');
+  }
+
+  const label = query ? highlightText(link.label, query) : link.label;
+
+  item.innerHTML = `
+    <div class="result-icon">🔗</div>
+    <div class="result-details">
+      <div class="result-title">${label}</div>
+      <div class="result-subtitle">${link.url} — ${link.noteTitle}</div>
+    </div>
+    <button class="copy-password-btn" title="Copy link">📋</button>
+  `;
+
+  const copyBtn = item.querySelector('.copy-password-btn');
+  copyBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    copyLink(link);
+  });
+
+  item.addEventListener('click', () => copyLink(link));
+
+  item.addEventListener('mouseenter', () => {
+    selectedIndex = index;
+    updateSelection();
+  });
+
+  return item;
 }
 
 async function copyPassword(password) {
@@ -436,6 +484,46 @@ function stripHtml(html) {
   });
   
   return tmp.textContent || tmp.innerText || '';
+}
+
+// Pulls every link out of a note so it can be found and copied directly
+// from search, without opening the note first. A link's label is its own
+// text when it has one (e.g. selecting "docs" before Cmd+K to insert a
+// link makes "docs" the label) — otherwise, for a bare auto-linked URL,
+// the plain text right before it on the line ("docs: https://…") is used
+// as a fallback label so a natural writing style still works.
+function extractLinksFromNote(note) {
+  const tmp = document.createElement('div');
+  tmp.innerHTML = note.content || '';
+  tmp.querySelectorAll('.password-field-container, [class*="password-field"]').forEach(el => el.remove());
+
+  const links = [];
+  tmp.querySelectorAll('a[href]').forEach(a => {
+    const url = a.getAttribute('href');
+    if (!url) return;
+
+    let label = (a.textContent || '').trim();
+    if (!label || label === url) {
+      const prev = a.previousSibling;
+      if (prev && prev.nodeType === Node.TEXT_NODE) {
+        const match = prev.textContent.match(/([A-Za-z0-9][A-Za-z0-9 _-]{0,40})[:\-–]\s*$/);
+        if (match) label = match[1].trim();
+      }
+    }
+    if (!label) label = url;
+
+    links.push({
+      label,
+      url,
+      noteId: note.id,
+      noteTitle: note.title || 'Untitled',
+      isFavorite: note.isFavorite || false,
+      updated: note.updated,
+      created: note.created
+    });
+  });
+
+  return links;
 }
 
 function highlightText(text, query) {

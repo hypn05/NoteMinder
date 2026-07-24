@@ -31,6 +31,14 @@
          on transparent frameless windows, so this is driven manually) -->
     <div id="resize-handle"></div>
 
+    <!-- Custom window controls, shown only in undocked (windowed) mode
+         since the frameless window has no native title bar to provide them -->
+    <div id="window-controls">
+      <button id="win-close" class="win-btn win-close" title="Dock back to the screen edge"></button>
+      <button id="win-minimize" class="win-btn win-minimize" title="Minimize"></button>
+      <button id="win-maximize" class="win-btn win-maximize" title="Maximize"></button>
+    </div>
+
     <!-- Sidebar (Notes List) -->
     <div id="sidebar" class="collapsed">
       <div id="sidebar-content">
@@ -73,6 +81,7 @@
             <button id="new-note-btn" class="new-item-btn">
               ➕ New Note
             </button>
+            <div id="tag-filters" class="tag-filters hidden"></div>
             <div id="notes-container"></div>
           </div>
 
@@ -122,6 +131,9 @@
           <button id="btn-reminder" class="btn btn-icon" title="Set Reminder">
             ⏰
           </button>
+          <button id="btn-dock-toggle" class="btn btn-icon" title="Undock into a normal window">
+            🗗
+          </button>
         </div>
       </div>
 
@@ -139,6 +151,9 @@
         <button class="format-btn" data-action="code" title="Code">&lt;/&gt;</button>
         <button class="format-btn" data-action="link" title="Link">🔗</button>
       </div>
+
+      <!-- Note-link autocomplete: appears while typing [[ in the editor -->
+      <div id="link-autocomplete" class="link-autocomplete hidden"></div>
 
       <!-- Find-in-note bar (hidden by default) -->
       <div id="find-bar" class="find-bar hidden">

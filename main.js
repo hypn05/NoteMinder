@@ -23,12 +23,25 @@ let currentScreenId = null;
 let pendingUpdate = null;
 
 // Which screen edge the floating tab is docked to, and its vertical
-// position as a ratio (0-1) of the target display's work area height.
+// position as a ratio (0-1 of the target display's work area height).
 let currentEdge = 'right';
 let tabYRatio = 0.5;
 let dragStartBounds = null;
 let isDraggingTab = false;
 let widthDragStart = null;
+
+// Docked = the floating always-on-top edge tab (default). Undocked = an
+// ordinary, freely-placed window that shows in the Dock/⌘Tab and behaves
+// like any other app. Remembers its own position/size separately from the
+// docked tab's edge + ratio.
+let isDocked = true;
+let windowedBounds = null;
+// Toggling dock mode changes several window properties (alwaysOnTop,
+// visibleOnWorkspaces, etc.) that can cause macOS to briefly blur the
+// window as a side effect. Without this, that transient blur immediately
+// re-triggers the auto-collapse-on-blur behavior right after re-docking.
+let suppressAutoCollapse = false;
+let suppressAutoCollapseTimer = null;
 
 // Authentication session tracking
 let lastAuthTime = null;
@@ -60,6 +73,39 @@ function computeSnappedBounds(width, height, edge, yRatio, targetDisplay) {
   return { x, y, width, height };
 }
 
+// Brings the main window to front and ensures it actually receives
+// keyboard input. Since the app hides its Dock icon (accessory-style
+// app), window.show()/focus() alone don't reliably grab real macOS
+// keyboard focus when called from a background context (a notification
+// click, or a request from the search window) rather than a direct
+// click on the window itself — app.focus({steal:true}) forces it.
+function activateMainWindow() {
+  if (!mainWindow) {
+    // The window can end up closed (an accidental Cmd+W, etc.) while the
+    // app itself keeps running — recreate it instead of leaving the tray
+    // icon unable to bring anything back.
+    createWindow();
+  }
+  if (process.platform === 'darwin') {
+    app.focus({ steal: true });
+  }
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+// Centered default size/position for windowed (undocked) mode, used the
+// first time someone undocks before there's a remembered position.
+function defaultWindowedBounds(targetDisplay) {
+  const width = 1000;
+  const height = 700;
+  return {
+    width,
+    height,
+    x: Math.round(targetDisplay.workArea.x + (targetDisplay.workArea.width - width) / 2),
+    y: Math.round(targetDisplay.workArea.y + (targetDisplay.workArea.height - height) / 2)
+  };
+}
+
 function createWindow() {
   const settings = settingsStorage.read() || { theme: 'dark', stayInView: false, screenId: null };
 
@@ -77,24 +123,29 @@ function createWindow() {
   currentScreenId = targetDisplay.id;
   currentEdge = settings.edge === 'left' ? 'left' : 'right';
   tabYRatio = typeof settings.tabYRatio === 'number' ? settings.tabYRatio : 0.5;
+  isDocked = settings.docked !== false;
+  windowedBounds = settings.windowedBounds || null;
 
-  // Start collapsed: 30px width, 80px height (arrow tab size)
+  // Start collapsed: 30px width, 80px height (arrow tab size) when docked;
+  // a normal-sized window (remembered, or centered) when undocked.
   const collapsedWidth = 30;
   const collapsedHeight = 80;
-  const startBounds = computeSnappedBounds(collapsedWidth, collapsedHeight, currentEdge, tabYRatio, targetDisplay);
+  const startBounds = isDocked
+    ? computeSnappedBounds(collapsedWidth, collapsedHeight, currentEdge, tabYRatio, targetDisplay)
+    : (windowedBounds || defaultWindowedBounds(targetDisplay));
 
   mainWindow = new BrowserWindow({
-    width: collapsedWidth,
-    height: collapsedHeight,
+    width: startBounds.width,
+    height: startBounds.height,
     x: startBounds.x,
     y: startBounds.y,
     frame: false,
     transparent: true,
-    alwaysOnTop: true,
-    resizable: false,
-    minimizable: false,
-    maximizable: false,
-    skipTaskbar: true,
+    alwaysOnTop: isDocked,
+    resizable: !isDocked,
+    minimizable: !isDocked,
+    maximizable: !isDocked,
+    skipTaskbar: isDocked,
     webPreferences: {
       nodeIntegration: true,
       contextIsolation: false
@@ -103,41 +154,75 @@ function createWindow() {
 
   mainWindow.loadFile('index.html');
 
+  // Without this, closing the window (e.g. an accidental Cmd+W) leaves
+  // `mainWindow` pointing at a destroyed BrowserWindow. Every subsequent
+  // access — the reminder-check interval, the dock-hide interval, tray
+  // clicks — would then throw "Object has been destroyed" repeatedly
+  // instead of the app just quietly having no window until reactivated.
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+  });
+
   // Set window properties
-  mainWindow.setAlwaysOnTop(true, 'floating');
+  if (isDocked) {
+    mainWindow.setAlwaysOnTop(true, 'floating');
+  }
   if (process.platform === 'darwin') {
-    mainWindow.setVisibleOnAllWorkspaces(true);
+    mainWindow.setVisibleOnAllWorkspaces(isDocked);
+    if (!isDocked) {
+      app.dock.show();
+    }
   }
 
-  // Handle window blur
+  // Handle window blur — only auto-collapses while docked; an undocked
+  // window behaves like a normal app and stays open when it loses focus.
   mainWindow.on('blur', () => {
     const settings = settingsStorage.read() || { stayInView: false };
-    if (!settings.stayInView && !isCollapsed) {
+    if (isDocked && !suppressAutoCollapse && !settings.stayInView && !isCollapsed) {
       mainWindow.webContents.send('collapse-sidebar');
     }
   });
 
-  // Remember a manually-resized expanded size so the next expand uses it
-  // instead of resetting to the default, and persist it across restarts.
-  let resizeSaveTimer = null;
-  mainWindow.on('resize', () => {
-    if (isCollapsed || !mainWindow) return;
+  // Remember size while docked-and-expanded, or full bounds while
+  // undocked, so the next expand/undock restores where it was left.
+  let stateSaveTimer = null;
+  const persistWindowState = () => {
+    if (!mainWindow) return;
     const bounds = mainWindow.getBounds();
-    mainWindow.webContents.send('window-resized', { width: bounds.width, height: bounds.height });
+    // Capture the mode NOW, not inside the debounced callback below — if
+    // dock mode is toggled while a save is still pending (well within the
+    // 300ms window, e.g. a quick undock-then-redock), reading the live
+    // `isDocked` at callback-fire-time would misfile these bounds under
+    // the wrong key (a windowed size landing in expandedWidth/Height, or
+    // vice versa).
+    const dockedAtCaptureTime = isDocked;
 
-    clearTimeout(resizeSaveTimer);
-    resizeSaveTimer = setTimeout(() => {
+    if (dockedAtCaptureTime) {
+      if (isCollapsed) return;
+      mainWindow.webContents.send('window-resized', { width: bounds.width, height: bounds.height });
+    }
+
+    clearTimeout(stateSaveTimer);
+    stateSaveTimer = setTimeout(() => {
       const currentSettings = settingsStorage.read() || {};
-      currentSettings.expandedWidth = bounds.width;
-      currentSettings.expandedHeight = bounds.height;
+      if (dockedAtCaptureTime) {
+        currentSettings.expandedWidth = bounds.width;
+        currentSettings.expandedHeight = bounds.height;
+      } else {
+        currentSettings.windowedBounds = bounds;
+        windowedBounds = bounds;
+      }
       settingsStorage.write(currentSettings);
     }, 300);
-  });
+  };
+  mainWindow.on('resize', persistWindowState);
+  mainWindow.on('move', persistWindowState);
 
-  // Continuously monitor and hide dock icon on macOS
+  // Continuously monitor and hide dock icon on macOS — only while docked;
+  // undocked mode wants the Dock icon so it behaves like a normal app.
   if (process.platform === 'darwin') {
     setInterval(() => {
-      if (app.dock.isVisible()) {
+      if (isDocked && app.dock.isVisible()) {
         app.dock.hide();
       }
     }, 1000);
@@ -146,11 +231,15 @@ function createWindow() {
   // Track mouse position for click-through
   mainWindow.webContents.on('did-finish-load', () => {
     mainWindow.webContents.send('init-settings', settings);
+    mainWindow.webContents.send('dock-mode-changed', isDocked);
   });
 }
 
 function createSearchWindow() {
   if (searchWindow) {
+    if (process.platform === 'darwin') {
+      app.focus({ steal: true });
+    }
     searchWindow.show();
     searchWindow.focus();
     searchWindow.webContents.send('focus-search');
@@ -188,6 +277,15 @@ function createSearchWindow() {
   
   // Show window when ready
   searchWindow.once('ready-to-show', () => {
+    // Since the app hides its Dock icon (accessory-style app), calling
+    // window.focus() alone doesn't reliably make macOS hand it real
+    // keyboard focus, especially when summoned via global shortcut while
+    // another app was active — the window looks focused but keystrokes
+    // (including Escape) can still be dropped. app.focus({steal:true})
+    // forces the app itself to activate first.
+    if (process.platform === 'darwin') {
+      app.focus({ steal: true });
+    }
     searchWindow.show();
     searchWindow.focus();
   });
@@ -230,10 +328,7 @@ function createTray() {
   updateTrayMenu();
   
   tray.on('click', () => {
-    if (mainWindow) {
-      mainWindow.show();
-      mainWindow.focus();
-    }
+    activateMainWindow();
   });
 }
 
@@ -407,6 +502,19 @@ function updateTrayMenu() {
             }
             updateTrayMenu();
           }
+        },
+        {
+          label: 'Paper',
+          type: 'radio',
+          checked: settings.theme === 'paper',
+          click: () => {
+            settings.theme = 'paper';
+            settingsStorage.write(settings);
+            if (mainWindow) {
+              mainWindow.webContents.send('theme-changed', 'paper');
+            }
+            updateTrayMenu();
+          }
         }
       ]
     },
@@ -525,6 +633,7 @@ ipcMain.handle('save-clips', (event, clips) => {
 ipcMain.handle('capture-clipboard-clip', () => captureClipboardClip());
 
 ipcMain.on('resize-window', (event, { width, height }) => {
+  if (!isDocked) return; // windowed mode is freely resized, not driven by this
   if (mainWindow) {
     const displays = screen.getAllDisplays();
 
@@ -541,6 +650,7 @@ ipcMain.on('resize-window', (event, { width, height }) => {
 });
 
 ipcMain.on('set-collapsed', (event, collapsed) => {
+  if (!isDocked) return; // windowed mode has no collapsed/expanded concept
   isCollapsed = collapsed;
   if (mainWindow) {
     // Set the minimum size before resizable, and before the renderer's
@@ -548,12 +658,117 @@ ipcMain.on('set-collapsed', (event, collapsed) => {
     // clamped by a leftover 500x300 minimum from the expanded state.
     mainWindow.setMinimumSize(collapsed ? 30 : 500, collapsed ? 80 : 300);
     mainWindow.setResizable(!collapsed);
+
+    // Collapsing (via the tab, 'h', or Escape) shrinks the window down to
+    // the small arrow tab, but it stays the OS-focused window unless we
+    // explicitly let go — otherwise keystrokes the user thinks are going
+    // to whatever app is now visible behind it keep going to this window.
+    if (collapsed) {
+      mainWindow.blur();
+    }
   }
+});
+
+// Switches between the floating always-on-top edge tab (docked) and an
+// ordinary, freely-placed window that shows in the Dock/⌘Tab (undocked).
+ipcMain.on('toggle-dock-mode', () => {
+  if (!mainWindow) return;
+  isDocked = !isDocked;
+
+  // Re-docking calls app.dock.hide(), which changes the app's macOS
+  // activation policy (regular -> accessory). That transition isn't
+  // instant — it can take close to a second — and the window can lose
+  // key-window status partway through, firing a blur that would otherwise
+  // immediately re-collapse the freshly re-docked window. 600ms wasn't
+  // enough margin; give it more room.
+  suppressAutoCollapse = true;
+  clearTimeout(suppressAutoCollapseTimer);
+  suppressAutoCollapseTimer = setTimeout(() => { suppressAutoCollapse = false; }, 2000);
+
+  const displays = screen.getAllDisplays();
+  const targetDisplay = displays.find(d => d.id === currentScreenId) || screen.getPrimaryDisplay();
+
+  if (isDocked) {
+    mainWindow.setMinimizable(false);
+    mainWindow.setMaximizable(false);
+    if (mainWindow.isMaximized()) mainWindow.unmaximize();
+    mainWindow.setAlwaysOnTop(true, 'floating');
+    mainWindow.setSkipTaskbar(true);
+    if (process.platform === 'darwin') {
+      mainWindow.setVisibleOnAllWorkspaces(true);
+      app.dock.hide();
+    }
+
+    // Re-dock expanded, at its own remembered *docked* size — not
+    // whatever size the window happened to be while undocked (which could
+    // be much larger, e.g. after maximizing). Collapsing immediately would
+    // also make the window feel like it just vanished, so stay expanded.
+    isCollapsed = false;
+    mainWindow.setMinimumSize(500, 300);
+    mainWindow.setResizable(true);
+    const dockedSettings = settingsStorage.read() || {};
+    const dockedWidth = dockedSettings.expandedWidth || 800;
+    const dockedHeight = dockedSettings.expandedHeight || Math.floor(targetDisplay.workArea.height * 0.8);
+    mainWindow.setBounds(
+      computeSnappedBounds(dockedWidth, dockedHeight, currentEdge, tabYRatio, targetDisplay),
+      true
+    );
+
+    // Proactively reclaim focus once the dock-icon transition and bounds
+    // animation have had time to settle, instead of just hoping the blur
+    // suppression window above covers it.
+    if (process.platform === 'darwin') {
+      setTimeout(() => {
+        if (mainWindow && isDocked) {
+          app.focus({ steal: true });
+          mainWindow.focus();
+        }
+      }, 350);
+    }
+  } else {
+    mainWindow.setAlwaysOnTop(false);
+    mainWindow.setSkipTaskbar(false);
+    mainWindow.setMinimizable(true);
+    mainWindow.setMaximizable(true);
+    mainWindow.setResizable(true);
+    mainWindow.setMinimumSize(500, 300);
+    if (process.platform === 'darwin') {
+      mainWindow.setVisibleOnAllWorkspaces(false);
+      app.dock.show();
+    }
+
+    isCollapsed = false;
+    mainWindow.setBounds(windowedBounds || defaultWindowedBounds(targetDisplay), true);
+  }
+
+  mainWindow.webContents.send('dock-mode-changed', isDocked);
+
+  const settings = settingsStorage.read() || {};
+  settings.docked = isDocked;
+  settingsStorage.write(settings);
+  updateTrayMenu();
 });
 
 ipcMain.on('set-ignore-mouse', (event, ignore) => {
   if (mainWindow) {
     mainWindow.setIgnoreMouseEvents(ignore, { forward: true });
+  }
+});
+
+// Custom window controls for undocked mode (no native frame to provide them)
+ipcMain.on('window-minimize', () => {
+  if (mainWindow && !isDocked) {
+    mainWindow.minimize();
+  }
+});
+
+ipcMain.on('window-maximize-toggle', () => {
+  if (mainWindow && !isDocked) {
+    if (mainWindow.isMaximized()) {
+      mainWindow.unmaximize();
+    } else {
+      mainWindow.maximize();
+    }
   }
 });
 
@@ -629,6 +844,16 @@ ipcMain.on('width-drag-start', () => {
 ipcMain.on('width-drag-move', (event, { dx }) => {
   if (!mainWindow || !widthDragStart) return;
 
+  const { bounds, edge } = widthDragStart;
+
+  if (!isDocked) {
+    // Undocked: the handle always sits on the right edge and just grows
+    // or shrinks the window there — no screen edge to anchor to.
+    const newWidth = Math.max(500, bounds.width + dx);
+    mainWindow.setBounds({ x: bounds.x, y: bounds.y, width: newWidth, height: bounds.height });
+    return;
+  }
+
   const displays = screen.getAllDisplays();
   let targetDisplay = displays.find(d => d.id === currentScreenId);
   if (!targetDisplay) {
@@ -636,7 +861,6 @@ ipcMain.on('width-drag-move', (event, { dx }) => {
     currentScreenId = targetDisplay.id;
   }
 
-  const { bounds, edge } = widthDragStart;
   let newWidth = edge === 'left' ? bounds.width + dx : bounds.width - dx;
   const maxWidth = targetDisplay.workAreaSize.width - 40;
   newWidth = Math.max(500, Math.min(newWidth, maxWidth));
@@ -671,8 +895,7 @@ ipcMain.on('show-notification', (event, { title, body, noteId }) => {
     
     notification.on('click', () => {
       if (mainWindow) {
-        mainWindow.show();
-        mainWindow.focus();
+        activateMainWindow();
         mainWindow.webContents.send('open-note', noteId);
       }
     });
@@ -724,8 +947,7 @@ ipcMain.handle('import-markdown', async () => {
 // IPC Handlers for search window
 ipcMain.on('open-note-from-search', (event, noteId) => {
   if (mainWindow) {
-    mainWindow.show();
-    mainWindow.focus();
+    activateMainWindow();
     if (isCollapsed) {
       mainWindow.webContents.send('expand-sidebar');
     }
@@ -748,8 +970,7 @@ ipcMain.on('open-search-window', () => {
 
 ipcMain.on('create-note-from-search', () => {
   if (mainWindow) {
-    mainWindow.show();
-    mainWindow.focus();
+    activateMainWindow();
     if (isCollapsed) {
       mainWindow.webContents.send('expand-sidebar');
     }
@@ -904,6 +1125,14 @@ function reanchorToCurrentScreen() {
 
 // App lifecycle
 app.whenReady().then(async () => {
+  // This is a background/tray app with no window that should own the
+  // system menu bar. Without this, Electron installs its platform default
+  // menu, which on macOS binds Cmd+W to "Close Window" and Cmd+Q to
+  // "Quit" — if the (invisible, collapsed) window ever has stray OS
+  // focus, those accelerators fire against NoteMinder instead of
+  // whatever app the user actually meant to target.
+  Menu.setApplicationMenu(null);
+
   createWindow();
   createTray();
 
