@@ -516,6 +516,187 @@ body.undocked #header {
   color: var(--text-secondary);
 }
 
+.shortcuts-hint {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  border-top: 1px solid var(--border-color);
+  padding-top: 12px;
+  margin-top: 4px;
+}
+
+/* Focus mode — dims the sidebar and editor chrome so only the note title
+   and body stand out; dimmed areas restore on hover so they're still usable */
+body.focus-mode #sidebar,
+body.focus-mode #editor-header,
+body.focus-mode #editor-footer,
+body.focus-mode #arrow-tab {
+  opacity: 0.2;
+  transition: opacity var(--transition-fast);
+}
+
+body.focus-mode #sidebar:hover,
+body.focus-mode #editor-header:hover,
+body.focus-mode #editor-footer:hover,
+body.focus-mode #arrow-tab:hover {
+  opacity: 1;
+}
+
+/* Update status pill, shown in the editor header while an update is
+   downloading or ready to install */
+.update-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: var(--radius-md);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.update-pill.update-pill-downloading {
+  cursor: default;
+}
+
+.update-pill.update-pill-ready {
+  background: var(--accent-primary);
+  color: white;
+}
+
+/* Settings modal (keyboard shortcuts + notes backup/sync) */
+.settings-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  max-height: 65vh;
+  overflow-y: auto;
+}
+
+.settings-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-section-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.settings-description {
+  font-size: 12px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin: 6px 0 12px;
+}
+
+.settings-subgroup {
+  margin-bottom: 14px;
+}
+
+.settings-subgroup-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-tertiary);
+  margin: 0 0 6px;
+}
+
+.keybind-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+}
+
+.keybind-label {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.keybind-pill {
+  flex-shrink: 0;
+  min-width: 150px;
+  text-align: center;
+  font-family: 'Monaco', 'Menlo', 'Courier New', monospace;
+  font-size: 12px;
+  color: var(--text-primary);
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 3px 8px;
+}
+
+.keybind-pill.keybind-recording {
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+.keybind-pill.keybind-error {
+  border-color: #e74c3c;
+  color: #e74c3c;
+}
+
+.settings-field-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.settings-field-row .input {
+  flex: 1;
+}
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.settings-hint {
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+  margin: 10px 0;
+  cursor: pointer;
+}
+
+/* First-run welcome modal */
+.onboarding-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.onboarding-list li {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-primary);
+}
+
+.onboarding-list .keybind-pill {
+  margin-right: 6px;
+}
+
 /* Floating formatting toolbar: appears near selected text instead of a
    fixed always-visible row, to keep the editor chrome minimal */
 .format-toolbar {

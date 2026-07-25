@@ -1,4 +1,6 @@
 // Reusable rich text editor component
+const keybindings = require('../utils/keybindingsStore');
+
 class Editor {
   constructor(editorElement) {
     this.editor = editorElement;
@@ -86,81 +88,68 @@ class Editor {
       }
     });
     
-    // Handle keyboard shortcuts
+    // Handle keyboard shortcuts (all remappable in Settings — see utils/keybindings.js)
     this.editor.addEventListener('keydown', (e) => {
-      // Cmd/Ctrl + Z for undo
-      if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
+      // Undo — Ctrl+Y is kept as a fixed Windows-convention alias alongside
+      // the remappable binding, since that muscle memory is very common there.
+      if (keybindings.matches('undo', e)) {
         e.preventDefault();
         this.undo();
         return;
       }
-      
-      // Cmd/Ctrl + Shift + Z or Cmd/Ctrl + Y for redo
-      if ((e.metaKey || e.ctrlKey) && (e.shiftKey && e.key === 'z' || e.key === 'y')) {
+
+      if (keybindings.matches('redo', e) || ((e.metaKey || e.ctrlKey) && e.key === 'y')) {
         e.preventDefault();
         this.redo();
         return;
       }
-      
-      // Cmd/Ctrl + B for bold
-      if ((e.metaKey || e.ctrlKey) && e.key === 'b') {
+
+      if (keybindings.matches('bold', e)) {
         e.preventDefault();
         this.execCommand('bold');
       }
-      // Cmd/Ctrl + I for italic
-      if ((e.metaKey || e.ctrlKey) && e.key === 'i') {
+      if (keybindings.matches('italic', e)) {
         e.preventDefault();
         this.execCommand('italic');
       }
-      // Cmd/Ctrl + U for underline
-      if ((e.metaKey || e.ctrlKey) && e.key === 'u') {
+      if (keybindings.matches('underline', e)) {
         e.preventDefault();
         this.execCommand('underline');
       }
-      
-      // Cmd/Ctrl + Shift + X for strikethrough
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'x') {
+
+      if (keybindings.matches('strikethrough', e)) {
         e.preventDefault();
         this.toggleStrikethrough();
         return;
       }
-      
-      // Cmd/Ctrl + Shift + H for highlight
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && e.key === 'h') {
+
+      if (keybindings.matches('highlight', e)) {
         e.preventDefault();
         this.toggleHighlight();
         return;
       }
 
-      // Cmd/Ctrl + Alt + 0/1/2/3 — 0 reverts to normal paragraph, 1/2/3 headings
-      if ((e.metaKey || e.ctrlKey) && e.altKey && !e.shiftKey) {
-        if (e.key === '0') { e.preventDefault(); this.clearBlockFormat(); return; }
-        if (e.key === '1') { e.preventDefault(); this.insertHeading(1); return; }
-        if (e.key === '2') { e.preventDefault(); this.insertHeading(2); return; }
-        if (e.key === '3') { e.preventDefault(); this.insertHeading(3); return; }
-      }
+      if (keybindings.matches('headingNormal', e)) { e.preventDefault(); this.clearBlockFormat(); return; }
+      if (keybindings.matches('heading1', e)) { e.preventDefault(); this.insertHeading(1); return; }
+      if (keybindings.matches('heading2', e)) { e.preventDefault(); this.insertHeading(2); return; }
+      if (keybindings.matches('heading3', e)) { e.preventDefault(); this.insertHeading(3); return; }
 
-      // Cmd/Ctrl + Shift + 7/8/9 for lists (ordered / unordered / task)
-      if ((e.metaKey || e.ctrlKey) && e.shiftKey && !e.altKey) {
-        if (e.key === '7') { e.preventDefault(); this.insertList('numbered'); return; }
-        if (e.key === '8') { e.preventDefault(); this.insertList('bullet'); return; }
-        if (e.key === '9') { e.preventDefault(); this.insertTaskList(); return; }
-      }
+      if (keybindings.matches('numberedList', e)) { e.preventDefault(); this.insertList('numbered'); return; }
+      if (keybindings.matches('bulletList', e)) { e.preventDefault(); this.insertList('bullet'); return; }
+      if (keybindings.matches('taskList', e)) { e.preventDefault(); this.insertTaskList(); return; }
 
-      // Cmd/Ctrl + K to insert link
-      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key === 'k') {
+      if (keybindings.matches('insertLink', e)) {
         e.preventDefault();
         this.insertLink();
         return;
       }
 
-      // Cmd/Ctrl + E for inline code
-      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key === 'e') {
+      if (keybindings.matches('inlineCode', e)) {
         e.preventDefault();
         this.insertCode();
         return;
       }
-      
+
       // Handle Markdown-style shortcuts
       // Auto-convert ** to bold
       if (e.key === ' ' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {

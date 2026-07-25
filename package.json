@@ -16,6 +16,9 @@
   ],
   "author": "",
   "license": "ISC",
+  "dependencies": {
+    "electron-updater": "^6.3.9"
+  },
   "devDependencies": {
     "electron": "^27.3.11",
     "electron-builder": "^26.15.3"
@@ -83,9 +86,14 @@
     "linux": {
       "icon": "build/icon512x512.png",
       "target": [
-        "AppImage"
+        "AppImage",
+        "deb",
+        "rpm"
       ],
-      "category": "Utility"
+      "category": "Utility",
+      "maintainer": "hypn05",
+      "vendor": "NoteMinder",
+      "synopsis": "Desktop note-taking application with collapsible sidebar"
     }
   }
 }

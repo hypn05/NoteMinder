@@ -1,6 +1,7 @@
 const { ipcRenderer, clipboard } = require('electron');
 const PasswordManager = require('./utils/passwordManager');
 const ClipManager = require('./utils/clipManager');
+const { TEMPLATES } = require('./utils/noteTemplates');
 
 // State
 let notes = [];
@@ -64,14 +65,6 @@ function setupEventListeners() {
   });
 }
 
-// Slash-style commands typed into the search box, e.g. ":n" to create a new note
-const SEARCH_COMMANDS = {
-  ':n': () => {
-    ipcRenderer.send('create-note-from-search');
-    closeWindow();
-  }
-};
-
 function handleSearch(e) {
   const query = e.target.value.trim();
 
@@ -82,8 +75,16 @@ function handleSearch(e) {
 
   const lowerQuery = query.toLowerCase();
 
-  if (SEARCH_COMMANDS[lowerQuery]) {
-    SEARCH_COMMANDS[lowerQuery]();
+  // ":n" creates a blank note immediately; ":t" instead lists templates to
+  // pick from (handled like any other result set, so arrow keys/Enter work).
+  if (lowerQuery === ':n') {
+    ipcRenderer.send('create-note-from-search');
+    closeWindow();
+    return;
+  }
+
+  if (lowerQuery === ':t') {
+    showTemplatePicker();
     return;
   }
 
@@ -197,7 +198,55 @@ function handleResultAction(result) {
     copyClip(result.data);
   } else if (result.type === 'link') {
     copyLink(result.data);
+  } else if (result.type === 'template') {
+    useTemplate(result.data.id);
   }
+}
+
+function showTemplatePicker() {
+  resultsContainer.innerHTML = '';
+
+  const header = document.createElement('div');
+  header.className = 'results-section-header';
+  header.textContent = 'New note from template';
+  resultsContainer.appendChild(header);
+
+  filteredResults = TEMPLATES.map(t => ({ type: 'template', data: t, titleMatch: true }));
+  selectedIndex = 0;
+
+  filteredResults.forEach((result, index) => {
+    resultsContainer.appendChild(createTemplateResultItem(result.data, index === selectedIndex));
+  });
+}
+
+function createTemplateResultItem(template, isSelected) {
+  const item = document.createElement('div');
+  item.className = 'result-item';
+  if (isSelected) {
+    item.classList.add('selected');
+  }
+
+  item.innerHTML = `
+    <div class="result-icon">${template.icon}</div>
+    <div class="result-details">
+      <div class="result-title">${template.label}</div>
+      <div class="result-subtitle">Create a new note from this template</div>
+    </div>
+  `;
+
+  item.addEventListener('click', () => useTemplate(template.id));
+
+  item.addEventListener('mouseenter', () => {
+    selectedIndex = filteredResults.findIndex(r => r.type === 'template' && r.data.id === template.id);
+    updateSelection();
+  });
+
+  return item;
+}
+
+function useTemplate(templateId) {
+  ipcRenderer.send('create-note-from-template', templateId);
+  closeWindow();
 }
 
 function copyClip(clip) {

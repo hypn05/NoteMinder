@@ -46,18 +46,32 @@ sudo xattr -cr /Applications/NoteMinder.app
 
 ### Windows
 
-1. Download `NoteMinder.Setup.X.X.X.exe` from [Releases](https://github.com/hypn05/NoteMinder/releases/latest).
-2. Run the installer and follow the wizard.
+1. Download `NoteMinder-Setup-X.X.X.exe` from [Releases](https://github.com/hypn05/NoteMinder/releases/latest).
+2. Run the installer and follow the wizard (no admin rights needed — it installs for your user only).
 3. Launch from the Start Menu or the desktop shortcut.
+
+**Note:** the installer isn't code-signed yet, so Windows SmartScreen may show "Windows protected your PC". Click **More info → Run anyway** to proceed — this is a one-time step per version.
 
 ### Linux
 
-1. Download `NoteMinder-X.X.X-arm64.AppImage` from [Releases](https://github.com/hypn05/NoteMinder/releases/latest).
-2. Make it executable and run it:
-   ```bash
-   chmod +x NoteMinder-X.X.X-arm64.AppImage
-   ./NoteMinder-X.X.X-arm64.AppImage
-   ```
+Pick whichever matches your distro:
+
+```bash
+# Debian / Ubuntu
+sudo apt install ./NoteMinder-X.X.X.deb
+
+# Fedora / RHEL / openSUSE
+sudo dnf install ./NoteMinder-X.X.X.rpm
+```
+
+Or, for a portable option that needs no install:
+
+```bash
+chmod +x NoteMinder-X.X.X.AppImage
+./NoteMinder-X.X.X.AppImage
+```
+
+All three are on the [Releases](https://github.com/hypn05/NoteMinder/releases/latest) page.
 
 ## Usage
 
@@ -124,13 +138,18 @@ clipboard history.
 
 ## Updates
 
-### Homebrew
+### Windows and Linux (direct download)
+The app checks for updates automatically, downloads them in the background, and prompts you to
+restart when the new version is ready — no manual download needed after the first install.
+
+### macOS
+macOS builds aren't code-signed (no Apple Developer account), so silent auto-update isn't available.
+The app checks for updates and notifies you when a new version is out:
+
 ```bash
 brew upgrade noteminder
 ```
-
-### Direct download
-The app checks for updates automatically and notifies you when a new version is available.
+or grab the new DMG directly from [Releases](https://github.com/hypn05/NoteMinder/releases/latest).
 
 ---
 

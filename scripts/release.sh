@@ -110,6 +110,8 @@ print_info "Copying builds to release directory..."
 cp dist/*.dmg "$RELEASE_DIR/" 2>/dev/null || true
 cp dist/*.exe "$RELEASE_DIR/" 2>/dev/null || true
 cp dist/*.AppImage "$RELEASE_DIR/" 2>/dev/null || true
+cp dist/*.deb "$RELEASE_DIR/" 2>/dev/null || true
+cp dist/*.rpm "$RELEASE_DIR/" 2>/dev/null || true
 cp dist/*.blockmap "$RELEASE_DIR/" 2>/dev/null || true
 cp dist/latest*.yml "$RELEASE_DIR/" 2>/dev/null || true
 print_success "Builds copied to $RELEASE_DIR"
@@ -153,11 +155,11 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     print_warning "IMPORTANT: Make sure to upload the following files to the GitHub release:"
     echo "  - All .dmg files (macOS installers)"
     echo "  - All .exe files (Windows installers)"
-    echo "  - All .AppImage files (Linux installers)"
-    echo "  - All .blockmap files (for delta updates)"
+    echo "  - All .AppImage, .deb, and .rpm files (Linux installers)"
+    echo "  - All .blockmap files (required for silent Windows/Linux auto-updates)"
     echo "  - latest.yml (Windows update metadata)"
     echo "  - latest-mac.yml (macOS update metadata)"
-    echo "  - latest-linux.yml or latest-linux-arm64.yml (Linux update metadata, if present)"
+    echo "  - latest-linux.yml (Linux/AppImage update metadata)"
     echo ""
     
     # Create GitHub release automatically

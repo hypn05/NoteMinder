@@ -4,10 +4,12 @@ const Editor = require('./components/editor');
 const NoteCard = require('./components/noteCard');
 const PasswordCard = require('./components/passwordCard');
 const PasswordModal = require('./components/passwordModal');
+const SettingsPanel = require('./components/settingsPanel');
 const PasswordManager = require('./utils/passwordManager');
 const ClipCard = require('./components/clipCard');
 const ClipManager = require('./utils/clipManager');
 const ReminderManager = require('./utils/reminder');
+const keybindings = require('./utils/keybindingsStore');
 
 // State
 let notes = [];
@@ -21,6 +23,8 @@ let searchQuery = '';
 let activeTagFilter = null;
 let expandedSize = { width: 800, height: Math.floor(window.screen.availHeight * 0.8) };
 let tabDragMoved = false;
+let currentUpdateState = null;
+let focusModeOn = false;
 
 // Components
 let modal = new Modal();
@@ -45,11 +49,20 @@ const charCountEl = document.getElementById('char-count');
 async function init() {
   // Ensure arrow tab is visible (fix for macOS logout/login issue)
   ensureArrowTabVisible();
-  
+
+  // Load the effective keybindings (defaults + any user overrides) before
+  // the editor starts listening for keydown, since it matches against them.
+  await keybindings.load();
+
+  const btnFocusModeTitle = document.getElementById('btn-focus-mode');
+  if (btnFocusModeTitle) {
+    btnFocusModeTitle.title = `Focus Mode (${keybindings.formatBinding(keybindings.getBinding('toggleFocusMode'))})`;
+  }
+
   // Initialize editor
   editor = new Editor(editorElement);
   editor.onChange = saveCurrentNote;
-  
+
   // Load notes, passwords and clips
   await loadNotes();
   await loadPasswords();
@@ -152,6 +165,12 @@ function setupEventListeners() {
   // Color picker
   document.getElementById('btn-color').addEventListener('click', showColorPicker);
 
+  // Focus mode — dims the sidebar and editor chrome, leaving just the note
+  const btnFocusMode = document.getElementById('btn-focus-mode');
+  if (btnFocusMode) {
+    btnFocusMode.addEventListener('click', toggleFocusMode);
+  }
+
   // Reminder button
   document.getElementById('btn-reminder').addEventListener('click', () => {
     if (currentNote) {
@@ -193,6 +212,26 @@ function setupEventListeners() {
   const btnShortcuts = document.getElementById('btn-shortcuts');
   if (btnShortcuts) {
     btnShortcuts.addEventListener('click', showShortcutsModal);
+  }
+
+  // Settings button — keyboard shortcut remapping, notes backup/sync
+  const btnSettings = document.getElementById('btn-settings');
+  if (btnSettings) {
+    btnSettings.addEventListener('click', showSettingsModal);
+  }
+
+  // Update status pill — clickable once a download is ready (restart to
+  // install) or, on macOS, once a new version is merely available (opens it)
+  const updatePill = document.getElementById('update-pill');
+  if (updatePill) {
+    updatePill.addEventListener('click', () => {
+      if (!currentUpdateState) return;
+      if (currentUpdateState.readyToInstall) {
+        ipcRenderer.send('quit-and-install');
+      } else if (currentUpdateState.releaseUrl) {
+        ipcRenderer.send('open-external-link', currentUpdateState.releaseUrl);
+      }
+    });
   }
 
   // Title input — updates currentNote and triggers debounced save
@@ -240,7 +279,7 @@ function setupEventListeners() {
   // Press `h` to collapse the sidebar when not typing in an editable field.
   // Only applies while docked — an undocked window has no collapsed state.
   document.addEventListener('keydown', (e) => {
-    if (!isDocked || e.key !== 'h' || e.metaKey || e.ctrlKey || e.altKey) return;
+    if (!isDocked || !keybindings.matches('collapseSidebar', e)) return;
     const t = e.target;
     const tag = t && t.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || (t && t.isContentEditable)) return;
@@ -294,6 +333,10 @@ function setupIpcListeners() {
     createNewNote();
   });
 
+  ipcRenderer.on('new-note-from-template', (event, templateId) => {
+    createNewNoteFromTemplate(templateId);
+  });
+
   ipcRenderer.on('reload-notes', async () => {
     await loadNotes();
     renderNotes();
@@ -340,6 +383,24 @@ function setupIpcListeners() {
   
   ipcRenderer.on('show-update-notes', (event, updateInfo) => {
     showUpdateNotesModal(updateInfo);
+  });
+
+  ipcRenderer.on('update-status', (event, state) => {
+    currentUpdateState = state;
+    renderUpdateStatus(state);
+  });
+
+  ipcRenderer.on('open-settings', () => {
+    showSettingsModal();
+  });
+
+  ipcRenderer.on('show-onboarding', () => {
+    // The window starts as a tiny 30x80 collapsed tab — expand it first so
+    // there's actually room to show the welcome modal.
+    if (isCollapsed) {
+      toggleSidebar();
+    }
+    setTimeout(showOnboardingModal, 350);
   });
 }
 
@@ -471,6 +532,14 @@ function applyDockMode(docked) {
     arrowTab.classList.add('expanded');
     document.body.classList.add('expanded');
   }
+}
+
+// Dims the sidebar and editor chrome (toolbar, footer) so only the note
+// title and body stay at full visibility — dimmed elements still work, just
+// faded until hovered, so switching notes/formatting is still one hover away.
+function toggleFocusMode() {
+  focusModeOn = !focusModeOn;
+  document.body.classList.toggle('focus-mode', focusModeOn);
 }
 
 function toggleSidebar() {
@@ -670,6 +739,17 @@ async function deleteClip(clip) {
 
 async function saveNotes() {
   await ipcRenderer.invoke('save-notes', notes);
+  maybeAutoExport();
+}
+
+// Fire-and-forget: if the user has turned on auto-export in Settings, mirror
+// every save out to their chosen folder too. Failures are silent here (no
+// export folder configured is the common case, not an error worth a toast).
+async function maybeAutoExport() {
+  const sync = await ipcRenderer.invoke('get-sync-settings');
+  if (sync.autoExport && sync.folderPath) {
+    require('./utils/markdownExport').exportNotes(notes).catch(() => {});
+  }
 }
 
 function switchTab(tabName) {
@@ -700,7 +780,12 @@ function switchTab(tabName) {
 // space between # and the tag so it can't be confused with "# Heading"
 // (which the editor converts to a real heading before this ever runs).
 function extractTags(content) {
-  const text = (content || '').replace(/<[^>]*>/g, ' ');
+  const text = (content || '')
+    .replace(/<[^>]*>/g, ' ')
+    // Strip full URLs first — auto-linked URLs keep the raw URL as their
+    // visible text (see Editor.autoLinkUrls), and a #fragment/#section in
+    // one would otherwise be picked up as a note tag.
+    .replace(/https?:\/\/\S+/g, ' ');
   const matches = text.match(/#([a-zA-Z0-9_-]+)/g) || [];
   return [...new Set(matches.map(t => t.slice(1).toLowerCase()))];
 }
@@ -861,6 +946,31 @@ function createNewNote() {
   }
 }
 
+function createNewNoteFromTemplate(templateId) {
+  const { getTemplate } = require('./utils/noteTemplates');
+  const template = getTemplate(templateId);
+  if (!template) return;
+
+  const note = {
+    id: Date.now().toString(),
+    title: template.title(),
+    content: template.content(),
+    backgroundColor: null,
+    created: new Date().toISOString(),
+    updated: new Date().toISOString(),
+    reminders: []
+  };
+
+  notes.unshift(note);
+  saveNotes();
+  openNote(note);
+  renderNotes();
+
+  if (isCollapsed) {
+    toggleSidebar();
+  }
+}
+
 function openNote(note) {
   // Flush any pending save for the previous note before switching
   flushPendingSave();
@@ -1015,103 +1125,73 @@ function setupFindBar() {
   next.addEventListener('click', () => { editor.nextMatch(); updateCounter(); });
   close.addEventListener('click', closeBar);
 
-  // Cmd/Ctrl+F anywhere in the renderer opens the find bar.
+  // App-level shortcuts (find, shortcuts panel, new note) — all remappable in Settings.
   document.addEventListener('keydown', (e) => {
-    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key === 'f') {
+    if (keybindings.matches('findInNote', e)) {
       if (isCollapsed) return; // editor not visible
       e.preventDefault();
       openBar();
     }
-    // Cmd/Ctrl + / opens the shortcuts cheat sheet
-    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key === '/') {
+    if (keybindings.matches('showShortcuts', e)) {
       e.preventDefault();
       showShortcutsModal();
     }
-    // Cmd/Ctrl + N creates a new note (expands the sidebar if collapsed)
-    if ((e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key === 'n') {
+    if (keybindings.matches('newNote', e)) {
       if (document.querySelector('.modal-overlay')) return;
       e.preventDefault();
       createNewNote();
+    }
+    if (keybindings.matches('toggleFocusMode', e)) {
+      e.preventDefault();
+      toggleFocusMode();
     }
   });
 }
 
 function showShortcutsModal() {
-  const isMac = navigator.platform.toLowerCase().includes('mac');
-  const mod = isMac ? '⌘' : 'Ctrl';
-  const alt = isMac ? '⌥' : 'Alt';
-  const shift = '⇧';
+  const groups = keybindings.getAllForUI();
 
-  const sections = [
-    {
-      title: 'Formatting',
-      shortcuts: [
-        [`${mod} B`, 'Bold'],
-        [`${mod} I`, 'Italic'],
-        [`${mod} U`, 'Underline'],
-        [`${mod} ${shift} X`, 'Strikethrough'],
-        [`${mod} ${shift} H`, 'Highlight'],
-        [`${mod} E`, 'Inline code'],
-        [`${mod} K`, 'Insert link'],
-      ],
-    },
-    {
-      title: 'Blocks',
-      shortcuts: [
-        [`${mod} ${alt} 0`, 'Normal text'],
-        [`${mod} ${alt} 1`, 'Heading 1'],
-        [`${mod} ${alt} 2`, 'Heading 2'],
-        [`${mod} ${alt} 3`, 'Heading 3'],
-        [`${mod} ${shift} 7`, 'Numbered list'],
-        [`${mod} ${shift} 8`, 'Bullet list'],
-        [`${mod} ${shift} 9`, 'Task list'],
-      ],
-    },
-    {
-      title: 'Editing',
-      shortcuts: [
-        [`${mod} Z`, 'Undo'],
-        [`${mod} ${shift} Z`, 'Redo'],
-        [`Tab / ${shift} Tab`, 'Indent / outdent list item'],
-        [`Enter (empty list/task)`, 'Exit the list'],
-        [`Backspace (start of task)`, 'Remove the checkbox'],
-      ],
-    },
-    {
-      title: 'Markdown shortcuts (type then space)',
-      shortcuts: [
-        ['# … ######', 'Heading 1 – 6'],
-        ['- / * / +', 'Bullet list'],
-        ['1.', 'Numbered list'],
-        ['[ ] / [x]', 'Task item'],
-        ['>', 'Blockquote'],
-        ['---', 'Horizontal rule'],
-        ['**text**', 'Bold'],
-        ['*text*', 'Italic'],
-        ['~~text~~', 'Strikethrough'],
-        ['==text==', 'Highlight'],
-        ['`text`', 'Inline code'],
-      ],
-    },
-    {
-      title: 'Navigation',
-      shortcuts: [
-        [`${mod} N`, 'New note'],
-        [`${mod} F`, 'Find in note'],
-        [`${mod} ${shift} Space`, 'Open search'],
-        [`:n (in search)`, 'Create a new note'],
-        [`${mod} ${shift} V`, 'Save clipboard as a clip, from anywhere'],
-        [`${mod} /`, 'Show this shortcuts panel'],
-        [`H`, 'Collapse the sidebar (when not typing)'],
-        [`Esc`, 'Close search / find / modal, or collapse the sidebar'],
-      ],
-    },
-  ];
+  // These aren't single-combo actions (multi-key sequences, contextual
+  // behavior) so they're not part of the remappable keybindings registry —
+  // shown here as fixed reference text.
+  const staticSections = {
+    Navigation: [
+      [':n (in search)', 'Create a new note'],
+      [':t (in search)', 'Create a new note from a template'],
+      ['Esc', 'Close search / find / modal, or collapse the sidebar']
+    ],
+    Editing: [
+      ['Tab / Shift Tab', 'Indent / outdent list item'],
+      ['Enter (empty list/task)', 'Exit the list'],
+      ['Backspace (start of task)', 'Remove the checkbox']
+    ],
+    'Markdown shortcuts (type then space)': [
+      ['# … ######', 'Heading 1 – 6'],
+      ['- / * / +', 'Bullet list'],
+      ['1.', 'Numbered list'],
+      ['[ ] / [x]', 'Task item'],
+      ['>', 'Blockquote'],
+      ['---', 'Horizontal rule'],
+      ['**text**', 'Bold'],
+      ['*text*', 'Italic'],
+      ['~~text~~', 'Strikethrough'],
+      ['==text==', 'Highlight'],
+      ['`text`', 'Inline code']
+    ]
+  };
+
+  const order = ['Global', 'Navigation', 'Formatting', 'Blocks', 'Editing', 'Markdown shortcuts (type then space)'];
 
   const content = document.createElement('div');
   content.className = 'shortcuts-panel';
 
-  sections.forEach(({ title, shortcuts }) => {
+  order.forEach((title) => {
+    const rows = [
+      ...(groups[title] || []).map((item) => [item.display, item.label]),
+      ...(staticSections[title] || [])
+    ];
+    if (rows.length === 0) return;
+
     const section = document.createElement('div');
     section.className = 'shortcuts-section';
 
@@ -1122,7 +1202,7 @@ function showShortcutsModal() {
 
     const table = document.createElement('div');
     table.className = 'shortcuts-table';
-    shortcuts.forEach(([keys, desc]) => {
+    rows.forEach(([keys, desc]) => {
       const row = document.createElement('div');
       row.className = 'shortcuts-row';
       const kbd = document.createElement('span');
@@ -1139,7 +1219,54 @@ function showShortcutsModal() {
     content.appendChild(section);
   });
 
+  const hint = document.createElement('div');
+  hint.className = 'shortcuts-hint';
+  hint.textContent = 'Customize any of these in Settings → Keyboard Shortcuts.';
+  content.appendChild(hint);
+
   modal.create('Keyboard Shortcuts', content);
+}
+
+function showOnboardingModal() {
+  const searchKeys = keybindings.formatBinding(keybindings.getBinding('globalSearch'));
+  const clipKeys = keybindings.formatBinding(keybindings.getBinding('globalClip'));
+  const shortcutsKeys = keybindings.formatBinding(keybindings.getBinding('showShortcuts'));
+
+  const content = document.createElement('div');
+  content.className = 'onboarding-panel';
+  content.innerHTML = `
+    <p class="settings-description">
+      NoteMinder lives docked to your screen edge and stays out of the way until you need it.
+    </p>
+    <ul class="onboarding-list">
+      <li><span class="keybind-pill">${searchKeys}</span> opens search from any app — jump to a note, link, password, or clip.</li>
+      <li><span class="keybind-pill">${clipKeys}</span> saves whatever's on your clipboard as a searchable clip, from any app.</li>
+      <li><span class="keybind-pill">${shortcutsKeys}</span> shows the full shortcuts list any time.</li>
+      <li>The <strong>⚙️ Settings</strong> icon above lets you remap any shortcut, or back up notes to a folder.</li>
+      <li>Click the arrow tab (or press Escape) to collapse NoteMinder back to the edge.</li>
+    </ul>
+  `;
+
+  const gotItBtn = document.createElement('button');
+  gotItBtn.className = 'btn btn-primary';
+  gotItBtn.style.width = '100%';
+  gotItBtn.style.marginTop = '16px';
+  gotItBtn.textContent = 'Got it';
+  gotItBtn.onclick = () => modal.close();
+  content.appendChild(gotItBtn);
+
+  modal.create('Welcome to NoteMinder', content);
+  modal.onClose = () => ipcRenderer.send('onboarding-complete');
+}
+
+function showSettingsModal() {
+  const settingsPanel = new SettingsPanel({
+    notes: () => notes,
+    showMessage
+  });
+  const content = settingsPanel.renderPanel();
+  modal.create('Settings', content);
+  modal.onClose = () => settingsPanel.destroy();
 }
 
 function deleteNote(note) {
@@ -2312,6 +2439,32 @@ function checkReminders() {
 function applyTheme(theme) {
   document.body.classList.toggle('light-theme', theme === 'light');
   document.body.classList.toggle('paper-theme', theme === 'paper');
+}
+
+function renderUpdateStatus(state) {
+  const pill = document.getElementById('update-pill');
+  if (!pill) return;
+
+  if (!state) {
+    pill.classList.add('hidden');
+    pill.textContent = '';
+    return;
+  }
+
+  pill.classList.remove('hidden');
+  pill.classList.toggle('update-pill-ready', !!state.readyToInstall);
+  pill.classList.toggle('update-pill-downloading', state.status === 'downloading');
+
+  if (state.status === 'downloading') {
+    pill.textContent = `⬇️ ${state.percent || 0}%`;
+    pill.title = `Downloading NoteMinder v${state.version}…`;
+  } else if (state.readyToInstall) {
+    pill.textContent = '🔄 Restart to update';
+    pill.title = `NoteMinder v${state.version} is ready to install`;
+  } else {
+    pill.textContent = `⬆️ v${state.version} available`;
+    pill.title = 'Click to view the release';
+  }
 }
 
 function showUpdateNotesModal(updateInfo) {

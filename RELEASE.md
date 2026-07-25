@@ -11,6 +11,18 @@ Before creating a release, ensure you have:
 - [ ] Updated documentation
 - [ ] Node.js and npm installed
 - [ ] electron-builder dependencies installed (`npm install`)
+- [ ] Building on the right host for each Linux target — see note below
+
+**Linux packaging note:** `.deb` and `.rpm` are built with native Linux packaging tools
+(`dpkg-deb`, `rpmbuild`) that only exist on Linux. Building `--linux` from macOS or Windows will
+still produce the `.AppImage` (it's just a self-contained archive), but `.deb`/`.rpm` will fail or be
+silently skipped. To get all three, run the Linux build from an actual Linux machine or WSL distro
+with Node.js installed natively inside it (not the Windows-side Node via WSL interop), or use
+electron-builder's Docker image:
+```bash
+docker run --rm -v "$(pwd)":/project -w /project electronuserland/builder:20 npm run build -- --linux
+```
+On Debian/Ubuntu-based Linux hosts, `rpmbuild` isn't installed by default — `sudo apt install rpm` first.
 
 ## Creating a Release
 
@@ -57,7 +69,7 @@ If you prefer to do it manually:
 3. **Create release directory**
    ```bash
    mkdir -p releases/v1.0.1
-   cp dist/*.dmg dist/*.exe dist/*.AppImage releases/v1.0.1/
+   cp dist/*.dmg dist/*.exe dist/*.AppImage dist/*.deb dist/*.rpm dist/*.blockmap dist/latest*.yml releases/v1.0.1/
    ```
 
 4. **Commit and tag**
@@ -87,7 +99,9 @@ If you prefer to do it manually:
    - `NoteMinder-X.X.X-arm64.dmg` (macOS Apple Silicon)
    - `NoteMinder-X.X.X.dmg` (macOS Intel, if built)
    - `NoteMinder-Setup-X.X.X.exe` (Windows)
-   - `NoteMinder-X.X.X.AppImage` (Linux)
+   - `NoteMinder-X.X.X.AppImage`, `NoteMinder-X.X.X.deb`, `NoteMinder-X.X.X.rpm` (Linux)
+   - `*.blockmap` files and `latest.yml` / `latest-mac.yml` / `latest-linux.yml` — **required** for the in-app
+     auto-updater (Windows/Linux) to find and silently install this release. Don't skip these.
 8. Click "Publish release"
 
 ### Option 2: GitHub CLI
@@ -146,7 +160,7 @@ Download the appropriate file for your platform:
 
 - **macOS**: NoteMinder-1.0.1-arm64.dmg (Apple Silicon) or NoteMinder-1.0.1.dmg (Intel)
 - **Windows**: NoteMinder-Setup-1.0.1.exe
-- **Linux**: NoteMinder-1.0.1.AppImage
+- **Linux**: NoteMinder-1.0.1.AppImage, NoteMinder-1.0.1.deb, or NoteMinder-1.0.1.rpm
 
 ## Installation Instructions
 
@@ -168,7 +182,19 @@ After building, you'll find these files in the `dist/` directory:
 
 ### Linux
 - `NoteMinder-X.X.X.AppImage` - Portable AppImage
+- `NoteMinder-X.X.X.deb` - Debian/Ubuntu package (`apt install ./NoteMinder-X.X.X.deb`)
+- `NoteMinder-X.X.X.rpm` - Fedora/RHEL/openSUSE package (`dnf install ./NoteMinder-X.X.X.rpm`)
 - `linux-unpacked/` - Unpacked application directory
+
+### Auto-update metadata (all platforms)
+- `latest.yml` - Windows update feed, read by the in-app updater
+- `latest-mac.yml` - macOS update feed (informational only — macOS can't silently self-update, see below)
+- `latest-linux.yml` - Linux (AppImage) update feed, read by the in-app updater
+- `*.blockmap` - per-installer diff manifests electron-updater uses for smaller, faster downloads
+
+These four are what make the in-app "Update Ready, Restart Now" flow work on Windows and Linux. If a
+release is missing them, the app will fall back to silently doing nothing until the next tagged
+release includes them.
 
 ## Troubleshooting
 
@@ -188,6 +214,26 @@ The script will skip code signing if no valid certificate is found. This is norm
 1. Obtain an Apple Developer certificate
 2. Configure code signing in `package.json` under `build.mac`
 3. See [electron-builder docs](https://www.electron.build/code-signing) for details
+
+### Code Signing (Windows) — removing the SmartScreen warning
+
+The Windows installer isn't signed, so users see a "Windows protected your PC" SmartScreen prompt
+on first run. A paid EV certificate (~$300-500/yr) removes it immediately; without one, reputation
+still builds up over time as more people click "Run anyway", but that's slow and not guaranteed.
+
+The free option worth applying for: **[SignPath.io's open-source signing program](https://signpath.io/product/open-source)**.
+It provides free code-signing certificates to qualifying open-source projects, with the signing itself
+run through their CI integration (no local private key to manage). Roughly:
+
+1. Apply at signpath.io with the GitHub repo URL — approval isn't instant and is at their discretion.
+2. Once approved, wire their GitHub Action (or CLI) into the release step, signing the `.exe` (and
+   ideally the `.msi`/`.blockmap` too) before it's uploaded to the GitHub release.
+3. electron-builder's `win.signingHashAlgorithms`/`win.certificateFile` config, or a post-build signing
+   step in `scripts/release.sh`, is where that would plug in — not configured yet since this needs the
+   maintainer's own SignPath application first.
+
+This isn't set up in this repo yet — it requires applying and getting approved outside of any single
+coding session.
 
 ### Permission Denied
 

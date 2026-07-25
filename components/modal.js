@@ -9,6 +9,10 @@ class Modal {
   create(title, content, options = {}) {
     // Remove existing modal if any
     this.destroy();
+    // Each modal is responsible for its own onClose (if any) — without
+    // resetting here, a previous modal's callback would fire again when
+    // this one closes, since Modal is a shared singleton.
+    this.onClose = null;
 
     // Create overlay
     this.overlay = document.createElement('div');

@@ -4,6 +4,7 @@ const Storage = require('./utils/storage');
 const ReminderManager = require('./utils/reminder');
 const AutoUpdater = require('./utils/autoUpdater');
 const SecurityManager = require('./utils/security');
+const { resolveBindings, toAccelerator } = require('./utils/keybindings');
 
 // Storage instances
 const notesStorage = new Storage('notes.json');
@@ -11,6 +12,8 @@ const settingsStorage = new Storage('settings.json');
 const passwordsStorage = new Storage('passwords.json');
 const securitySettingsStorage = new Storage('security-settings.json');
 const clipsStorage = new Storage('clips.json');
+const keybindingsStorage = new Storage('keybindings.json');
+const syncSettingsStorage = new Storage('sync-settings.json');
 const securityManager = new SecurityManager();
 
 let mainWindow = null;
@@ -232,6 +235,10 @@ function createWindow() {
   mainWindow.webContents.on('did-finish-load', () => {
     mainWindow.webContents.send('init-settings', settings);
     mainWindow.webContents.send('dock-mode-changed', isDocked);
+
+    if (!settings.onboardingComplete) {
+      mainWindow.webContents.send('show-onboarding');
+    }
   });
 }
 
@@ -332,17 +339,68 @@ function createTray() {
   });
 }
 
+// Scans every note's reminders for the soonest upcoming one, across the
+// whole app — used to show a "next reminder" preview in the tray without
+// having to open a note first.
+function getNextUpcomingReminder() {
+  const notes = notesStorage.read() || [];
+  let soonest = null;
+
+  notes.forEach((note) => {
+    (note.reminders || []).forEach((reminder) => {
+      if (!reminder.enabled) return;
+      const nextTime = reminderManager.getNextReminderTime(reminder);
+      if (nextTime && (!soonest || nextTime < soonest.nextTime)) {
+        soonest = { note, reminder, nextTime };
+      }
+    });
+  });
+
+  if (!soonest) return null;
+
+  return {
+    noteTitle: soonest.note.title || 'Untitled',
+    noteId: soonest.note.id,
+    display: reminderManager.formatReminderDisplay(soonest.reminder)
+  };
+}
+
 function updateTrayMenu() {
   const settings = settingsStorage.read() || { theme: 'dark', stayInView: false, screenId: null };
   const displays = screen.getAllDisplays();
-  
+
+  const nextReminder = reminderManager ? getNextUpcomingReminder() : null;
+  const reminderMenuItem = nextReminder ? [
+    {
+      label: `🔔 ${nextReminder.noteTitle} — ${nextReminder.display}`,
+      click: () => {
+        activateMainWindow();
+        if (isCollapsed && mainWindow) {
+          mainWindow.webContents.send('expand-sidebar');
+        }
+        if (mainWindow) {
+          mainWindow.webContents.send('open-note', nextReminder.noteId);
+        }
+      }
+    },
+    { type: 'separator' }
+  ] : [];
+
   // Build update menu item if update is available
   const updateMenuItem = pendingUpdate ? [
     {
-      label: `Update Available (v${pendingUpdate.latestVersion})`,
+      label: pendingUpdate.status === 'downloading'
+        ? `Downloading Update… ${pendingUpdate.percent || 0}%`
+        : pendingUpdate.readyToInstall
+          ? `Restart to Install Update (v${pendingUpdate.version})`
+          : `Update Available (v${pendingUpdate.version})`,
+      enabled: pendingUpdate.status !== 'downloading',
       click: () => {
-        // AutoUpdater doesn't download in-app; point the user to the release
-        if (pendingUpdate.releaseUrl) {
+        if (pendingUpdate.readyToInstall) {
+          if (updateChecker) {
+            updateChecker.quitAndInstall();
+          }
+        } else if (pendingUpdate.releaseUrl) {
           shell.openExternal(pendingUpdate.releaseUrl);
         }
       }
@@ -376,6 +434,7 @@ function updateTrayMenu() {
   });
   
   const contextMenu = Menu.buildFromTemplate([
+    ...reminderMenuItem,
     ...updateMenuItem,
     {
       label: 'New Note',
@@ -518,6 +577,16 @@ function updateTrayMenu() {
         }
       ]
     },
+    {
+      label: 'Settings...',
+      click: () => {
+        activateMainWindow();
+        if (mainWindow) {
+          mainWindow.webContents.send('expand-sidebar');
+          mainWindow.webContents.send('open-settings');
+        }
+      }
+    },
     { type: 'separator' },
     {
       label: 'Check for Updates',
@@ -550,9 +619,37 @@ function updateTrayMenu() {
   ]);
   
   tray.setContextMenu(contextMenu);
-  tray.setToolTip('NoteMinder');
+  tray.setToolTip(nextReminder ? `NoteMinder — Next: ${nextReminder.noteTitle} (${nextReminder.display})` : 'NoteMinder');
 }
 
+
+// (Re-)registers the two OS-wide global shortcuts (open search, save clip)
+// from the current keybindings.json, falling back to the built-in defaults.
+// Safe to call again after a rebind — it unregisters everything first, and
+// these are the only global shortcuts this app owns.
+function registerGlobalShortcuts() {
+  globalShortcut.unregisterAll();
+
+  const bindings = resolveBindings(keybindingsStorage.read() || {});
+
+  const searchAccelerator = toAccelerator(bindings.globalSearch);
+  if (searchAccelerator && !globalShortcut.register(searchAccelerator, () => createSearchWindow())) {
+    console.error('Global shortcut registration failed:', searchAccelerator);
+  }
+
+  const clipAccelerator = toAccelerator(bindings.globalClip);
+  if (clipAccelerator && !globalShortcut.register(clipAccelerator, () => {
+    const result = captureClipboardClip();
+    if (result.success && !result.duplicate && Notification.isSupported()) {
+      const preview = result.clip.text.length > 60
+        ? result.clip.text.substring(0, 60) + '...'
+        : result.clip.text;
+      new Notification({ title: 'Clip saved', body: preview, silent: true }).show();
+    }
+  })) {
+    console.error('Global shortcut registration failed:', clipAccelerator);
+  }
+}
 
 // Reads the current OS clipboard and saves it as a clip, from any app.
 // Shared by the global shortcut and the sidebar's "Add from Clipboard" button.
@@ -601,17 +698,119 @@ ipcMain.handle('get-notes', () => {
 });
 
 ipcMain.handle('save-notes', (event, notes) => {
-  return notesStorage.write(notes);
+  const result = notesStorage.write(notes);
+  updateTrayMenu(); // a reminder may have just been added/edited/removed
+  return result;
 });
 
 ipcMain.handle('get-settings', () => {
   return settingsStorage.read() || { theme: 'dark', stayInView: false };
 });
 
+ipcMain.on('onboarding-complete', () => {
+  const settings = settingsStorage.read() || {};
+  settings.onboardingComplete = true;
+  settingsStorage.write(settings);
+});
+
 ipcMain.handle('save-settings', (event, settings) => {
   settingsStorage.write(settings);
   updateTrayMenu();
   return true;
+});
+
+ipcMain.handle('get-keybindings', () => {
+  return keybindingsStorage.read() || {};
+});
+
+ipcMain.handle('save-keybinding', (event, { actionId, binding }) => {
+  const overrides = keybindingsStorage.read() || {};
+  overrides[actionId] = binding;
+  keybindingsStorage.write(overrides);
+
+  // Global shortcuts are owned by the OS via globalShortcut — an app-level
+  // or editor-level rebind just takes effect on the next keydown in the
+  // renderer, but a global one has to be re-registered here to take effect.
+  const action = require('./utils/keybindings').getAction(actionId);
+  if (action && action.scope === 'global') {
+    registerGlobalShortcuts();
+  }
+
+  return { success: true };
+});
+
+ipcMain.handle('reset-keybinding', (event, actionId) => {
+  const overrides = keybindingsStorage.read() || {};
+  delete overrides[actionId];
+  keybindingsStorage.write(overrides);
+
+  const action = require('./utils/keybindings').getAction(actionId);
+  if (action && action.scope === 'global') {
+    registerGlobalShortcuts();
+  }
+
+  return true;
+});
+
+ipcMain.handle('reset-keybindings', () => {
+  keybindingsStorage.write({});
+  registerGlobalShortcuts();
+  return true;
+});
+
+// Notes export/sync folder — a one-way "export every note as a .md file
+// into this folder" so it can be picked up by Dropbox/iCloud/Syncthing etc.
+// Deliberately one-way (app -> folder only): watching the folder for
+// external edits and importing them back would risk clobbering notes on
+// conflicting changes, which isn't worth the risk for a backup feature.
+ipcMain.handle('get-sync-settings', () => {
+  return syncSettingsStorage.read() || { folderPath: null, autoExport: false, lastExportAt: null };
+});
+
+ipcMain.handle('choose-sync-folder', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Choose a folder to export notes to',
+    properties: ['openDirectory', 'createDirectory']
+  });
+
+  if (result.canceled || !result.filePaths.length) {
+    return { success: false };
+  }
+
+  const settings = syncSettingsStorage.read() || {};
+  settings.folderPath = result.filePaths[0];
+  syncSettingsStorage.write(settings);
+  return { success: true, folderPath: settings.folderPath };
+});
+
+ipcMain.handle('save-sync-settings', (event, partial) => {
+  const settings = syncSettingsStorage.read() || {};
+  Object.assign(settings, partial);
+  syncSettingsStorage.write(settings);
+  return true;
+});
+
+ipcMain.handle('export-notes-to-folder', async (event, files) => {
+  const settings = syncSettingsStorage.read() || {};
+  if (!settings.folderPath) {
+    return { success: false, error: 'No export folder configured yet' };
+  }
+
+  const fs = require('fs');
+  const path = require('path');
+  try {
+    if (!fs.existsSync(settings.folderPath)) {
+      fs.mkdirSync(settings.folderPath, { recursive: true });
+    }
+    files.forEach(({ filename, content }) => {
+      fs.writeFileSync(path.join(settings.folderPath, filename), content, 'utf8');
+    });
+    settings.lastExportAt = new Date().toISOString();
+    syncSettingsStorage.write(settings);
+    return { success: true, count: files.length, folderPath: settings.folderPath, lastExportAt: settings.lastExportAt };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
 });
 
 ipcMain.handle('get-passwords', () => {
@@ -922,6 +1121,12 @@ ipcMain.handle('check-for-updates', async () => {
   return null;
 });
 
+ipcMain.on('quit-and-install', () => {
+  if (updateChecker) {
+    updateChecker.quitAndInstall();
+  }
+});
+
 ipcMain.on('open-external-link', (event, url) => {
   shell.openExternal(url);
 });
@@ -975,6 +1180,19 @@ ipcMain.on('create-note-from-search', () => {
       mainWindow.webContents.send('expand-sidebar');
     }
     mainWindow.webContents.send('new-note');
+  }
+  if (searchWindow) {
+    searchWindow.hide();
+  }
+});
+
+ipcMain.on('create-note-from-template', (event, templateId) => {
+  if (mainWindow) {
+    activateMainWindow();
+    if (isCollapsed) {
+      mainWindow.webContents.send('expand-sidebar');
+    }
+    mainWindow.webContents.send('new-note-from-template', templateId);
   }
   if (searchWindow) {
     searchWindow.hide();
@@ -1141,32 +1359,9 @@ app.whenReady().then(async () => {
   screen.on('display-removed', reanchorToCurrentScreen);
   powerMonitor.on('resume', reanchorToCurrentScreen);
   
-  // Register global shortcut for search
-  const searchShortcut = process.platform === 'darwin' ? 'Command+Shift+Space' : 'Control+Shift+Space';
-  const ret = globalShortcut.register(searchShortcut, () => {
-    createSearchWindow();
-  });
-  
-  if (!ret) {
-    console.error('Global shortcut registration failed');
-  }
-
-  // Register global shortcut to save the current clipboard as a clip,
-  // from any app, without needing to open NoteMinder first
-  const clipShortcut = process.platform === 'darwin' ? 'Command+Shift+V' : 'Control+Shift+V';
-  const clipRet = globalShortcut.register(clipShortcut, () => {
-    const result = captureClipboardClip();
-    if (result.success && !result.duplicate && Notification.isSupported()) {
-      const preview = result.clip.text.length > 60
-        ? result.clip.text.substring(0, 60) + '...'
-        : result.clip.text;
-      new Notification({ title: 'Clip saved', body: preview, silent: true }).show();
-    }
-  });
-
-  if (!clipRet) {
-    console.error('Clip shortcut registration failed');
-  }
+  // Register the two OS-wide global shortcuts from the user's (or default)
+  // keybindings. Called again after either is remapped in Settings.
+  registerGlobalShortcuts();
 
   // Request notification permissions on macOS
   if (process.platform === 'darwin') {
@@ -1196,19 +1391,24 @@ app.whenReady().then(async () => {
     if (mainWindow) {
       mainWindow.webContents.send('check-reminders');
     }
+    // Keep the tray's "next reminder" preview fresh even if nothing gets
+    // saved for a while (e.g. "Today at 3:00 PM" ticking over to tomorrow).
+    updateTrayMenu();
   }); 
   reminderManager.start();
   
-  // Initialize update checker
-  updateChecker = new AutoUpdater(mainWindow);
-  updateChecker.start();
-  
-  // Check for updates and notify if available
-  const updateInfo = await updateChecker.checkForUpdates();
-  if (updateInfo) {
-    pendingUpdate = updateInfo;
+  // Initialize update checker. onStateChange fires whenever there's an
+  // update worth surfacing in the tray menu (available on macOS,
+  // downloaded and ready to install on Windows/Linux).
+  updateChecker = new AutoUpdater(mainWindow, (state) => {
+    pendingUpdate = state;
     updateTrayMenu();
-  }
+    if (mainWindow) {
+      mainWindow.webContents.send('update-status', state);
+    }
+  });
+  updateChecker.start();
+  await updateChecker.checkForUpdates();
 });
 
 app.on('window-all-closed', () => {
