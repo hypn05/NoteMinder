@@ -456,6 +456,36 @@ body.undocked #header {
   opacity: 0.5;
 }
 
+.backlinks-indicator {
+  margin-left: auto;
+  cursor: pointer;
+  color: var(--text-tertiary);
+}
+
+.backlinks-indicator:hover {
+  color: var(--accent-primary);
+}
+
+.backlinks-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 50vh;
+  overflow-y: auto;
+}
+
+.backlink-row {
+  padding: 10px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.backlink-row:hover {
+  background: var(--bg-hover);
+}
+
 /* Find-in-note bar */
 .find-bar {
   display: flex;
@@ -712,6 +742,53 @@ body.focus-mode #arrow-tab:hover {
   color: var(--text-primary);
   margin: 10px 0;
   cursor: pointer;
+}
+
+/* Trash modal */
+.trash-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.trash-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.trash-row:last-of-type {
+  border-bottom: none;
+}
+
+.trash-row-info {
+  min-width: 0;
+  flex: 1;
+}
+
+.trash-row-title {
+  font-size: 13px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trash-row-meta {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin-top: 2px;
+}
+
+.trash-row-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
 /* First-run welcome modal */

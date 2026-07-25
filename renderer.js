@@ -10,6 +10,7 @@ const ClipCard = require('./components/clipCard');
 const ClipManager = require('./utils/clipManager');
 const ReminderManager = require('./utils/reminder');
 const keybindings = require('./utils/keybindingsStore');
+const { extractTags } = require('./utils/noteTags');
 
 // State
 let notes = [];
@@ -812,20 +813,6 @@ function switchTab(tabName) {
   document.getElementById('app').classList.toggle('wide-mode', tabName !== 'notes');
 }
 
-// Pulls #tags out of a note's text (anywhere in the body). Requires no
-// space between # and the tag so it can't be confused with "# Heading"
-// (which the editor converts to a real heading before this ever runs).
-function extractTags(content) {
-  const text = (content || '')
-    .replace(/<[^>]*>/g, ' ')
-    // Strip full URLs first — auto-linked URLs keep the raw URL as their
-    // visible text (see Editor.autoLinkUrls), and a #fragment/#section in
-    // one would otherwise be picked up as a note tag.
-    .replace(/https?:\/\/\S+/g, ' ');
-  const matches = text.match(/#([a-zA-Z0-9_-]+)/g) || [];
-  return [...new Set(matches.map(t => t.slice(1).toLowerCase()))];
-}
-
 function renderTagFilters() {
   const container = document.getElementById('tag-filters');
   if (!container) return;
@@ -876,16 +863,10 @@ function renderNotes() {
     filteredNotes = filteredNotes.filter(note => extractTags(note.content).includes(activeTagFilter));
   }
 
-  // Sort notes: favorites first, then by updated date
-  filteredNotes.sort((a, b) => {
-    // If one is favorite and the other isn't, favorite comes first
-    if (a.isFavorite && !b.isFavorite) return -1;
-    if (!a.isFavorite && b.isFavorite) return 1;
-    
-    // If both are favorites or both are not, maintain current order
-    // (order is already set by user's drag and drop)
-    return 0;
-  });
+  // Sort notes: pinned first, then favorites, then by manual drag order.
+  // Array.sort is stable, so notes within the same tier keep their
+  // existing relative order.
+  filteredNotes.sort((a, b) => noteRank(a) - noteRank(b));
   
   if (filteredNotes.length === 0) {
     const empty = document.createElement('div');
@@ -905,6 +886,7 @@ function renderNotes() {
       onSetReminder: showReminderModal,
       onReorder: reorderNotes,
       onToggleFavorite: toggleNoteFavorite,
+      onTogglePin: toggleNotePin,
       isActive: currentNote && currentNote.id === note.id
     });
     notesContainer.appendChild(noteCard.render());
@@ -917,27 +899,38 @@ function toggleNoteFavorite(note) {
   renderNotes();
 }
 
+function toggleNotePin(note) {
+  note.isPinned = !note.isPinned;
+  saveNotes();
+  renderNotes();
+}
+
+// Lower rank = higher priority = sorts earlier. Pinned notes always sit
+// above favorites, which sit above everything else.
+function noteRank(note) {
+  if (note.isPinned) return 0;
+  if (note.isFavorite) return 1;
+  return 2;
+}
+
 function reorderNotes(draggedNoteId, targetNoteId, insertBefore) {
   // Find the indices of the dragged and target notes
   const draggedIndex = notes.findIndex(n => n.id === draggedNoteId);
   const targetIndex = notes.findIndex(n => n.id === targetNoteId);
-  
+
   if (draggedIndex === -1 || targetIndex === -1) return;
-  
+
   const draggedNote = notes[draggedIndex];
   const targetNote = notes[targetIndex];
-  
-  // Prevent moving non-favorite notes above favorite notes
-  // and favorite notes below non-favorite notes
-  if (draggedNote.isFavorite && !targetNote.isFavorite) {
-    // Can't move favorite below non-favorite
-    if (!insertBefore) return;
-  }
-  if (!draggedNote.isFavorite && targetNote.isFavorite) {
-    // Can't move non-favorite above favorite
-    if (insertBefore) return;
-  }
-  
+
+  // Keep pinned/favorite/normal as contiguous tiers — a note can be
+  // reordered freely within its own tier, but can't cross into another
+  // (e.g. a pinned note can't be dropped below a non-pinned one).
+  const draggedRank = noteRank(draggedNote);
+  const targetRank = noteRank(targetNote);
+  if (draggedRank < targetRank && !insertBefore) return;
+  if (draggedRank > targetRank && insertBefore) return;
+
   // Remove the dragged note from its current position
   notes.splice(draggedIndex, 1);
   
@@ -1059,7 +1052,7 @@ function openNote(note) {
   } else {
     editorElement.style.backgroundColor = '';
     editorElement.style.color = '';
-    
+
     // Remove custom link style
     let styleId = 'editor-link-style';
     let existingStyle = document.getElementById(styleId);
@@ -1067,6 +1060,63 @@ function openNote(note) {
       existingStyle.remove();
     }
   }
+
+  renderBacklinksIndicator(note);
+}
+
+// Finds every OTHER note whose content contains a [[wiki-link]] pointing at
+// this one (see insertNoteLink — a note-link is an <a class="note-link"
+// data-note-link="targetId">). This is a pure forward scan done on demand,
+// not a maintained index, since notes.json is small enough that rescanning
+// on note-open is cheap.
+function getBacklinks(noteId) {
+  const results = [];
+  notes.forEach(note => {
+    if (note.id === noteId) return;
+    if (!note.content || note.content.indexOf('data-note-link') === -1) return;
+    const tmp = document.createElement('div');
+    tmp.innerHTML = note.content;
+    const linksHere = Array.from(tmp.querySelectorAll('a.note-link[data-note-link]'))
+      .some(a => a.getAttribute('data-note-link') === noteId);
+    if (linksHere) results.push(note);
+  });
+  return results;
+}
+
+function renderBacklinksIndicator(note) {
+  const el = document.getElementById('backlinks-indicator');
+  if (!el) return;
+
+  const backlinks = getBacklinks(note.id);
+  if (backlinks.length === 0) {
+    el.classList.add('hidden');
+    el.textContent = '';
+    el.onclick = null;
+    return;
+  }
+
+  el.classList.remove('hidden');
+  el.textContent = `🔗 Linked from ${backlinks.length}`;
+  el.onclick = () => showBacklinksModal(backlinks);
+}
+
+function showBacklinksModal(backlinks) {
+  const content = document.createElement('div');
+  content.className = 'backlinks-panel';
+
+  backlinks.forEach(note => {
+    const row = document.createElement('div');
+    row.className = 'backlink-row';
+    row.textContent = note.title || 'Untitled';
+    row.addEventListener('click', () => {
+      modal.close();
+      if (isCollapsed) toggleSidebar();
+      openNote(note);
+    });
+    content.appendChild(row);
+  });
+
+  modal.create('Linked From', content);
 }
 
 // Debounce disk writes — every keystroke used to write the whole notes.json.
@@ -1194,6 +1244,8 @@ function showShortcutsModal() {
     Navigation: [
       [':n (in search)', 'Create a new note'],
       [':t (in search)', 'Create a new note from a template'],
+      ['tag:x (in search)', 'Show only notes tagged #x'],
+      ['title:x (in search)', 'Search note titles only'],
       ['Esc', 'Close search / find / modal, or collapse the sidebar']
     ],
     Editing: [
@@ -1295,6 +1347,82 @@ function showOnboardingModal() {
   modal.onClose = () => ipcRenderer.send('onboarding-complete');
 }
 
+async function showTrashModal() {
+  const content = document.createElement('div');
+  content.className = 'trash-panel';
+
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  const renderList = async () => {
+    const items = await ipcRenderer.invoke('get-trash');
+    content.innerHTML = '';
+
+    if (items.length === 0) {
+      content.innerHTML = `
+        <div class="empty-state">
+          <div class="empty-state-icon">🗑️</div>
+          <div class="empty-state-text">Trash is empty</div>
+        </div>
+      `;
+      return;
+    }
+
+    const desc = document.createElement('p');
+    desc.className = 'settings-description';
+    desc.textContent = 'Deleted notes are kept for 7 days before being permanently removed.';
+    content.appendChild(desc);
+
+    items.forEach(note => {
+      const daysLeft = Math.max(0, 7 - Math.floor((Date.now() - new Date(note.deletedAt).getTime()) / DAY_MS));
+
+      const row = document.createElement('div');
+      row.className = 'trash-row';
+      row.innerHTML = `
+        <div class="trash-row-info">
+          <div class="trash-row-title">${note.title || 'Untitled'}</div>
+          <div class="trash-row-meta">Deleted ${new Date(note.deletedAt).toLocaleDateString()} · ${daysLeft} day${daysLeft === 1 ? '' : 's'} left</div>
+        </div>
+        <div class="trash-row-actions">
+          <button class="btn btn-small trash-restore">Restore</button>
+          <button class="btn btn-small trash-delete">Delete Forever</button>
+        </div>
+      `;
+
+      row.querySelector('.trash-restore').addEventListener('click', async () => {
+        const result = await ipcRenderer.invoke('restore-note', note.id);
+        if (result.success) {
+          await loadNotes();
+          renderNotes();
+          showMessage('Note restored', 'success');
+          renderList();
+        }
+      });
+
+      row.querySelector('.trash-delete').addEventListener('click', async () => {
+        if (!confirm("Permanently delete this note? This can't be undone.")) return;
+        await ipcRenderer.invoke('permanently-delete-note', note.id);
+        renderList();
+      });
+
+      content.appendChild(row);
+    });
+
+    const emptyAllBtn = document.createElement('button');
+    emptyAllBtn.className = 'btn btn-small';
+    emptyAllBtn.style.marginTop = '12px';
+    emptyAllBtn.textContent = 'Empty Trash';
+    emptyAllBtn.addEventListener('click', async () => {
+      if (!confirm("Permanently delete everything in trash? This can't be undone.")) return;
+      await ipcRenderer.invoke('empty-trash');
+      renderList();
+    });
+    content.appendChild(emptyAllBtn);
+  };
+
+  await renderList();
+  modal.create('Trash', content);
+}
+
 function showSettingsModal() {
   const settingsPanel = new SettingsPanel({
     notes: () => notes,
@@ -1309,6 +1437,9 @@ function deleteNote(note) {
   if (confirm('Delete this note?')) {
     notes = notes.filter(n => n.id !== note.id);
     saveNotes();
+    // Moved to trash, not gone — recoverable from Settings > More > Trash
+    // for 7 days before it's purged for good.
+    ipcRenderer.invoke('trash-note', note);
 
     if (currentNote && currentNote.id === note.id) {
       if (notes.length > 0) {
@@ -1635,6 +1766,9 @@ function setupAllDropdowns() {
         },
         'Keyboard Shortcuts': () => {
           showShortcutsModal();
+        },
+        'Trash': () => {
+          showTrashModal();
         },
         'Settings': () => {
           showSettingsModal();

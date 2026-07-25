@@ -319,6 +319,19 @@
   padding-left: 18px;
 }
 
+/* Pinned notes get a small persistent corner marker (top-right, so it
+   doesn't collide with the favorite star on the left) in addition to
+   always sorting to the top of the list. */
+.note-card.pinned::after {
+  content: '📌';
+  position: absolute;
+  top: 6px;
+  right: 12px;
+  font-size: 10px;
+  opacity: 0.85;
+  pointer-events: none;
+}
+
 /* Password Field Component */
 .password-field-container {
   background: var(--bg-secondary);

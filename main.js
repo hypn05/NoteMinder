@@ -14,6 +14,9 @@ const securitySettingsStorage = new Storage('security-settings.json');
 const clipsStorage = new Storage('clips.json');
 const keybindingsStorage = new Storage('keybindings.json');
 const syncSettingsStorage = new Storage('sync-settings.json');
+const trashStorage = new Storage('trash.json');
+
+const TRASH_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const securityManager = new SecurityManager();
 
 let mainWindow = null;
@@ -109,6 +112,32 @@ function defaultWindowedBounds(targetDisplay) {
   };
 }
 
+// Remembers dock edge + vertical position per monitor (keyed by Electron's
+// display.id), so moving between monitors restores where the tab was last
+// left on each one instead of reapplying whichever monitor's position was
+// used most recently. Falls back to the old flat settings.edge/tabYRatio
+// fields for a display that's never been seen before (including every
+// display on first upgrade from before this existed).
+function getDisplayPosition(settings, displayId) {
+  const perDisplay = settings.perDisplayPosition || {};
+  if (perDisplay[displayId]) {
+    return perDisplay[displayId];
+  }
+  return {
+    edge: settings.edge === 'left' ? 'left' : 'right',
+    tabYRatio: typeof settings.tabYRatio === 'number' ? settings.tabYRatio : 0.5
+  };
+}
+
+function setDisplayPosition(settings, displayId, edge, tabYRatio) {
+  if (!settings.perDisplayPosition) settings.perDisplayPosition = {};
+  settings.perDisplayPosition[displayId] = { edge, tabYRatio };
+  // Keep the flat fields in sync as a "last used anywhere" fallback for
+  // whichever display doesn't have its own entry yet.
+  settings.edge = edge;
+  settings.tabYRatio = tabYRatio;
+}
+
 function createWindow() {
   const settings = settingsStorage.read() || { theme: 'dark', stayInView: false, screenId: null };
 
@@ -124,8 +153,9 @@ function createWindow() {
   }
 
   currentScreenId = targetDisplay.id;
-  currentEdge = settings.edge === 'left' ? 'left' : 'right';
-  tabYRatio = typeof settings.tabYRatio === 'number' ? settings.tabYRatio : 0.5;
+  const initialPosition = getDisplayPosition(settings, currentScreenId);
+  currentEdge = initialPosition.edge;
+  tabYRatio = initialPosition.tabYRatio;
   isDocked = settings.docked !== false;
   windowedBounds = settings.windowedBounds || null;
 
@@ -421,13 +451,19 @@ function updateTrayMenu() {
       checked: display.id === (settings.screenId || screen.getPrimaryDisplay().id),
       click: () => {
         settings.screenId = display.id;
+        // Restore this display's own remembered edge/position rather than
+        // carrying over whichever one was in use on the previous display.
+        const position = getDisplayPosition(settings, display.id);
+        currentEdge = position.edge;
+        tabYRatio = position.tabYRatio;
         settingsStorage.write(settings);
-        
+
         // Reposition window to the new screen
         if (mainWindow) {
           repositionWindow(display.id);
+          mainWindow.webContents.send('edge-changed', currentEdge);
         }
-        
+
         updateTrayMenu();
       }
     };
@@ -701,6 +737,58 @@ ipcMain.handle('save-notes', (event, notes) => {
   const result = notesStorage.write(notes);
   updateTrayMenu(); // a reminder may have just been added/edited/removed
   return result;
+});
+
+// Deleted notes go here instead of disappearing outright, and are purged
+// after 7 days. Purge is lazy (done on read) rather than a timer — trash is
+// only ever looked at when the user opens it, so there's nothing to gain
+// from checking on a schedule nobody's watching.
+function readTrashAndPurgeExpired() {
+  const trash = trashStorage.read() || [];
+  const cutoff = Date.now() - TRASH_RETENTION_MS;
+  const kept = trash.filter((n) => new Date(n.deletedAt).getTime() > cutoff);
+  if (kept.length !== trash.length) {
+    trashStorage.write(kept);
+  }
+  return kept;
+}
+
+ipcMain.handle('get-trash', () => {
+  return readTrashAndPurgeExpired();
+});
+
+ipcMain.handle('trash-note', (event, note) => {
+  const trash = readTrashAndPurgeExpired();
+  trash.unshift({ ...note, deletedAt: new Date().toISOString() });
+  trashStorage.write(trash);
+  return true;
+});
+
+ipcMain.handle('restore-note', (event, noteId) => {
+  const trash = readTrashAndPurgeExpired();
+  const index = trash.findIndex((n) => n.id === noteId);
+  if (index === -1) return { success: false };
+
+  const [restored] = trash.splice(index, 1);
+  delete restored.deletedAt;
+  trashStorage.write(trash);
+
+  const notes = notesStorage.read() || [];
+  notes.unshift(restored);
+  notesStorage.write(notes);
+
+  return { success: true, note: restored };
+});
+
+ipcMain.handle('permanently-delete-note', (event, noteId) => {
+  const trash = readTrashAndPurgeExpired();
+  trashStorage.write(trash.filter((n) => n.id !== noteId));
+  return true;
+});
+
+ipcMain.handle('empty-trash', () => {
+  trashStorage.write([]);
+  return true;
 });
 
 ipcMain.handle('get-settings', () => {
@@ -1032,8 +1120,7 @@ ipcMain.on('tab-drag-end', () => {
   mainWindow.webContents.send('edge-changed', currentEdge);
 
   const settings = settingsStorage.read() || {};
-  settings.edge = currentEdge;
-  settings.tabYRatio = tabYRatio;
+  setDisplayPosition(settings, currentScreenId, currentEdge, tabYRatio);
   settings.screenId = currentScreenId;
   settingsStorage.write(settings);
   updateTrayMenu();

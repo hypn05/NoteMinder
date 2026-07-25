@@ -2,6 +2,7 @@ const { ipcRenderer, clipboard } = require('electron');
 const PasswordManager = require('./utils/passwordManager');
 const ClipManager = require('./utils/clipManager');
 const { TEMPLATES } = require('./utils/noteTemplates');
+const { extractTags } = require('./utils/noteTags');
 
 // State
 let notes = [];
@@ -88,6 +89,32 @@ function handleSearch(e) {
     return;
   }
 
+  // "tag:xyz" / "title:xyz" filter notes only, bypassing the general
+  // title-or-content search below.
+  const tagOperator = query.match(/^tag:(\S+)/i);
+  if (tagOperator) {
+    const tag = tagOperator[1].toLowerCase();
+    filteredResults = notes
+      .filter(note => extractTags(note.content).includes(tag))
+      .map(note => ({ type: 'note', data: note, titleMatch: true }));
+    sortResults(filteredResults);
+    selectedIndex = filteredResults.length > 0 ? 0 : -1;
+    renderResults(query);
+    return;
+  }
+
+  const titleOperator = query.match(/^title:(.+)/i);
+  if (titleOperator) {
+    const titleQuery = titleOperator[1].trim().toLowerCase();
+    filteredResults = notes
+      .filter(note => (note.title || '').toLowerCase().includes(titleQuery))
+      .map(note => ({ type: 'note', data: note, titleMatch: true }));
+    sortResults(filteredResults);
+    selectedIndex = filteredResults.length > 0 ? 0 : -1;
+    renderResults(query);
+    return;
+  }
+
   // Match notes on title OR content. Track titleMatch so title hits rank first.
   const matchedNotes = notes.reduce((acc, note) => {
     const title = (note.title || '').toLowerCase();
@@ -114,9 +141,22 @@ function handleSearch(e) {
     .map(link => ({ type: 'link', data: link, titleMatch: true }));
 
   filteredResults = [...matchedLinks, ...matchedNotes, ...matchedPasswords, ...matchedClips];
+  sortResults(filteredResults);
 
-  // Sort: favorites first, then title matches above content matches, then recency.
-  filteredResults.sort((a, b) => {
+  selectedIndex = filteredResults.length > 0 ? 0 : -1;
+  renderResults(query);
+}
+
+// Sort: pinned first, then favorites, then title matches above content
+// matches, then recency. Passwords/clips/links have no isPinned/isFavorite,
+// so they naturally fall after any matching pinned/favorite notes.
+function sortResults(results) {
+  results.sort((a, b) => {
+    const aPin = a.data.isPinned || false;
+    const bPin = b.data.isPinned || false;
+    if (aPin && !bPin) return -1;
+    if (!aPin && bPin) return 1;
+
     const aFav = a.data.isFavorite || false;
     const bFav = b.data.isFavorite || false;
     if (aFav && !bFav) return -1;
@@ -129,9 +169,6 @@ function handleSearch(e) {
     const bDate = new Date(b.data.updated || b.data.created);
     return bDate - aDate;
   });
-
-  selectedIndex = filteredResults.length > 0 ? 0 : -1;
-  renderResults(query);
 }
 
 function handleKeyDown(e) {

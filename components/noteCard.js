@@ -18,7 +18,10 @@ class NoteCard {
     if (this.note.isFavorite) {
       card.classList.add('favorite');
     }
-    
+    if (this.note.isPinned) {
+      card.classList.add('pinned');
+    }
+
     // Make card draggable
     card.draggable = true;
     card.dataset.noteId = this.note.id;
@@ -96,6 +99,22 @@ class NoteCard {
     const actions = document.createElement('div');
     actions.className = 'note-card-actions';
     
+    // Pin button
+    const pinBtn = document.createElement('button');
+    pinBtn.className = 'note-action-btn';
+    pinBtn.innerHTML = '📌';
+    pinBtn.style.opacity = this.note.isPinned ? '1' : '0.4';
+    pinBtn.title = this.note.isPinned ? 'Unpin' : 'Pin to top';
+    if (textColor) {
+      pinBtn.style.color = textColor;
+    }
+    pinBtn.onclick = (e) => {
+      e.stopPropagation();
+      if (this.options && this.options.onTogglePin) {
+        this.options.onTogglePin(this.note);
+      }
+    };
+
     // Favorite button
     const favoriteBtn = document.createElement('button');
     favoriteBtn.className = 'note-action-btn';
@@ -141,6 +160,7 @@ class NoteCard {
       }
     };
     
+    actions.appendChild(pinBtn);
     actions.appendChild(favoriteBtn);
     actions.appendChild(reminderBtn);
     actions.appendChild(deleteBtn);
