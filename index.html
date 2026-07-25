@@ -107,6 +107,9 @@
       </div>
     </div>
     
+    <!-- Splitter: drag to resize the notes list vs. editor split -->
+    <div id="sidebar-splitter" title="Drag to resize"></div>
+
     <!-- Editor -->
     <div id="editor-container">
       <!-- Editor Header -->
@@ -120,15 +123,6 @@
             </button>
             <div class="dropdown-menu hidden"></div>
           </div>
-          <button id="btn-shortcuts" class="btn btn-icon" title="Keyboard Shortcuts (⌘/)">
-            ⌨️
-          </button>
-          <button id="btn-settings" class="btn btn-icon" title="Settings">
-            ⚙️
-          </button>
-          <button id="btn-search" class="btn btn-icon" title="Search (⌘⇧Space)">
-            🔍
-          </button>
           <button id="btn-focus-mode" class="btn btn-icon" title="Focus Mode">
             🧘
           </button>
@@ -138,6 +132,12 @@
           <button id="btn-reminder" class="btn btn-icon" title="Set Reminder">
             ⏰
           </button>
+          <div class="dropdown">
+            <button id="more-menu-dropdown" class="btn btn-icon" title="More">
+              ⋯
+            </button>
+            <div class="dropdown-menu hidden"></div>
+          </div>
           <button id="btn-dock-toggle" class="btn btn-icon" title="Undock into a normal window">
             🗗
           </button>

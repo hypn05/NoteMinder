@@ -848,6 +848,15 @@ ipcMain.on('resize-window', (event, { width, height }) => {
   }
 });
 
+// Notes-list-vs-editor split width — purely a renderer/CSS concern (unlike
+// resize-window, which resizes the actual OS window), so this just persists
+// the final width once dragging ends.
+ipcMain.on('save-sidebar-width', (event, width) => {
+  const settings = settingsStorage.read() || {};
+  settings.sidebarWidth = width;
+  settingsStorage.write(settings);
+});
+
 ipcMain.on('set-collapsed', (event, collapsed) => {
   if (!isDocked) return; // windowed mode has no collapsed/expanded concept
   isCollapsed = collapsed;

@@ -30,6 +30,58 @@ const TEMPLATES = [
     content: () =>
       '<h3>Top Priorities</h3>' + taskItemHtml() + taskItemHtml() + taskItemHtml() +
       '<h3>Notes</h3><p></p>'
+  },
+  {
+    id: 'to-do-list',
+    label: 'To-Do List',
+    icon: '✅',
+    title: () => `To-Do List — ${new Date().toLocaleDateString()}`,
+    content: () =>
+      '<h3>Tasks</h3>' + taskItemHtml() + taskItemHtml() + taskItemHtml() + taskItemHtml()
+  },
+  {
+    id: 'weekly-review',
+    label: 'Weekly Review',
+    icon: '📊',
+    title: () => `Weekly Review — Week of ${new Date().toLocaleDateString()}`,
+    content: () =>
+      '<h3>Wins</h3><ul><li></li></ul>' +
+      '<h3>Challenges</h3><ul><li></li></ul>' +
+      '<h3>Next Week\'s Priorities</h3>' + taskItemHtml() + taskItemHtml() + taskItemHtml()
+  },
+  {
+    id: 'brainstorm',
+    label: 'Brainstorm',
+    icon: '💡',
+    title: () => `Brainstorm — ${new Date().toLocaleDateString()}`,
+    content: () =>
+      '<p><strong>Topic:</strong> </p>' +
+      '<h3>Ideas</h3><ul><li></li></ul>' +
+      '<h3>Best Ideas</h3><ul><li></li></ul>' +
+      '<h3>Next Steps</h3>' + taskItemHtml()
+  },
+  {
+    id: 'one-on-one',
+    label: '1:1 Meeting',
+    icon: '🗣️',
+    title: () => `1:1 — ${new Date().toLocaleDateString()}`,
+    content: () =>
+      '<p><strong>With:</strong> </p>' +
+      '<h3>Discussion Topics</h3><ul><li></li></ul>' +
+      '<h3>Feedback</h3><p></p>' +
+      '<h3>Follow-ups</h3>' + taskItemHtml()
+  },
+  {
+    id: 'bug-report',
+    label: 'Bug Report',
+    icon: '🐞',
+    title: () => 'Bug Report',
+    content: () =>
+      '<p><strong>Summary:</strong> </p>' +
+      '<h3>Steps to Reproduce</h3><ol><li></li></ol>' +
+      '<h3>Expected Behavior</h3><p></p>' +
+      '<h3>Actual Behavior</h3><p></p>' +
+      '<h3>Notes</h3><p></p>'
   }
 ];
 

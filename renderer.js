@@ -50,6 +50,14 @@ async function init() {
   // Ensure arrow tab is visible (fix for macOS logout/login issue)
   ensureArrowTabVisible();
 
+  // Register IPC listeners before anything gets awaited below. Main sends
+  // 'init-settings'/'dock-mode-changed'/'show-onboarding' as soon as the page
+  // finishes loading, which can race ahead of an async init() that hasn't
+  // reached this call yet — on a slow load, those sends would arrive before
+  // any listener existed and be silently dropped (theme/edge/sidebar-width
+  // never applied, undocked mode never expanding, onboarding never shown).
+  setupIpcListeners();
+
   // Load the effective keybindings (defaults + any user overrides) before
   // the editor starts listening for keydown, since it matches against them.
   await keybindings.load();
@@ -70,10 +78,7 @@ async function init() {
   
   // Setup event listeners
   setupEventListeners();
-  
-  // Setup IPC listeners
-  setupIpcListeners();
-  
+
   // Track mouse for click-through
   setupMouseTracking();
   
@@ -112,6 +117,7 @@ function setupEventListeners() {
   });
   setupTabDragging();
   setupWidthDragging();
+  setupSidebarSplitter();
 
   // Search
   searchInput.addEventListener('input', handleSearch);
@@ -200,26 +206,6 @@ function setupEventListeners() {
     winMaximize.addEventListener('click', () => ipcRenderer.send('window-maximize-toggle'));
   }
 
-  // Search button (alternative to ⌘⇧Space)
-  const btnSearch = document.getElementById('btn-search');
-  if (btnSearch) {
-    btnSearch.addEventListener('click', () => {
-      ipcRenderer.send('open-search-window');
-    });
-  }
-
-  // Shortcuts button — opens the keyboard-shortcuts cheat sheet
-  const btnShortcuts = document.getElementById('btn-shortcuts');
-  if (btnShortcuts) {
-    btnShortcuts.addEventListener('click', showShortcutsModal);
-  }
-
-  // Settings button — keyboard shortcut remapping, notes backup/sync
-  const btnSettings = document.getElementById('btn-settings');
-  if (btnSettings) {
-    btnSettings.addEventListener('click', showSettingsModal);
-  }
-
   // Update status pill — clickable once a download is ready (restart to
   // install) or, on macOS, once a new version is merely available (opens it)
   const updatePill = document.getElementById('update-pill');
@@ -306,6 +292,9 @@ function setupIpcListeners() {
     applyEdge(settings.edge === 'left' ? 'left' : 'right');
     if (settings.expandedWidth && settings.expandedHeight) {
       expandedSize = { width: settings.expandedWidth, height: settings.expandedHeight };
+    }
+    if (settings.sidebarWidth) {
+      sidebar.style.setProperty('--sidebar-width', `${settings.sidebarWidth}px`);
     }
   });
 
@@ -507,6 +496,53 @@ function setupWidthDragging() {
     }
     dragStartX = null;
   });
+}
+
+// Drag handle between the notes list and the editor. Purely a renderer/CSS
+// concern (unlike setupWidthDragging, which resizes the actual OS window) —
+// it just adjusts the --sidebar-width custom property, so no IPC round trip
+// is needed until the drag ends and the final width gets persisted.
+function setupSidebarSplitter() {
+  const splitter = document.getElementById('sidebar-splitter');
+  if (!splitter) return;
+
+  const MIN_SIDEBAR = 220;
+  const MIN_EDITOR = 320;
+  let dragging = false;
+
+  const stopDragging = () => {
+    if (!dragging) return;
+    dragging = false;
+    splitter.classList.remove('dragging');
+    sidebar.classList.remove('resizing');
+    document.body.style.cursor = '';
+    const width = Math.round(sidebar.getBoundingClientRect().width);
+    ipcRenderer.send('save-sidebar-width', width);
+  };
+
+  splitter.addEventListener('mousedown', (e) => {
+    if (isCollapsed || document.getElementById('app').classList.contains('wide-mode')) return;
+    dragging = true;
+    splitter.classList.add('dragging');
+    // The sidebar's collapse/expand width transition would otherwise fight
+    // every mousemove update, making the drag laggy and the final width
+    // (read on mouseup) reflect a mid-transition value instead of the mouse's
+    // actual position.
+    sidebar.classList.add('resizing');
+    document.body.style.cursor = 'col-resize';
+    e.preventDefault();
+  });
+
+  document.addEventListener('mousemove', (e) => {
+    if (!dragging) return;
+    const appRect = document.getElementById('app').getBoundingClientRect();
+    const maxWidth = Math.max(MIN_SIDEBAR, appRect.width - MIN_EDITOR);
+    const newWidth = Math.min(maxWidth, Math.max(MIN_SIDEBAR, e.clientX - appRect.left));
+    sidebar.style.setProperty('--sidebar-width', `${newWidth}px`);
+  });
+
+  document.addEventListener('mouseup', stopDragging);
+  window.addEventListener('blur', stopDragging);
 }
 
 function applyEdge(edge) {
@@ -1588,6 +1624,20 @@ function setupAllDropdowns() {
         },
         'Clear Formatting': () => {
           if (editor) editor.clearBlockFormat();
+        }
+      }
+    },
+    {
+      buttonId: 'more-menu-dropdown',
+      items: {
+        'Search': () => {
+          ipcRenderer.send('open-search-window');
+        },
+        'Keyboard Shortcuts': () => {
+          showShortcutsModal();
+        },
+        'Settings': () => {
+          showSettingsModal();
         }
       }
     }

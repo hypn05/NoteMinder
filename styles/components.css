@@ -689,6 +689,7 @@
   align-items: center;
   gap: 12px;
   margin-bottom: 0;
+  min-width: 0;
 }
 
 .note-card-icon {

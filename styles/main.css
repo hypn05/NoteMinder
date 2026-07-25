@@ -129,9 +129,17 @@ body.expanded.left-edge #resize-handle {
 }
 
 #sidebar.expanded {
-  width: 30%;
+  width: var(--sidebar-width, 30%);
   min-width: 250px;
   opacity: 1;
+}
+
+/* While manually dragging the splitter, the collapse/expand width
+   transition would otherwise make the sidebar visibly lag behind the mouse
+   and cause the persisted width (read on mouseup) to capture an
+   in-transition value instead of where the drag actually ended. */
+#sidebar.resizing {
+  transition: none;
 }
 
 /* The editor panel only serves the Notes tab; Passwords and Clips have
@@ -143,6 +151,34 @@ body.expanded.left-edge #resize-handle {
 
 #app.wide-mode #editor-container {
   display: none;
+}
+
+/* Drag handle between the notes list and the editor — a flex sibling
+   sitting exactly at their boundary, so no position math is needed. Hidden
+   whenever there's nothing to split (sidebar collapsed, or wide-mode where
+   the sidebar already takes the full window). */
+#sidebar-splitter {
+  flex-shrink: 0;
+  width: 0;
+  cursor: col-resize;
+  -webkit-app-region: no-drag;
+  position: relative;
+}
+
+#sidebar.expanded + #sidebar-splitter {
+  width: 5px;
+  margin: 0 -2px;
+  z-index: 5;
+}
+
+#sidebar.expanded + #sidebar-splitter:hover,
+#sidebar-splitter.dragging {
+  background: var(--accent-primary);
+}
+
+#app.wide-mode #sidebar-splitter {
+  width: 0 !important;
+  margin: 0;
 }
 
 /* Sidebar content */
@@ -200,6 +236,7 @@ body.expanded.left-edge #resize-handle {
 /* Notes list */
 #notes-container {
   flex: 1;
+  min-width: 0;
   overflow-y: auto;
   padding: var(--spacing-md);
   -webkit-app-region: no-drag;
