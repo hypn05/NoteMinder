@@ -401,8 +401,21 @@
     color: var(--ink);
   }
   .install-card a.dl:hover { border-color: rgba(237,235,245,0.2); }
+  .install-card .dl-row { display: flex; gap: 8px; }
+  .install-card .dl-row a.dl { flex: 1; }
   .install-card .note { font-size: 12px; color: var(--ink-faint); margin-top: 10px; }
   .install-card code { font-family: "JetBrains Mono", monospace; font-size: 11.5px; }
+  .install-card .update-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    color: var(--accent);
+    margin-top: 14px;
+  }
+  .install-card .update-tag .dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
 
   /* ---- Footer ---- */
   footer {
@@ -462,7 +475,7 @@
 
 <header class="hero" id="top">
   <div class="wrap">
-    <span class="eyebrow"><span class="dot"></span>v1.1.8 · macOS, Windows, Linux</span>
+    <span class="eyebrow"><span class="dot"></span>v1.3.0 · macOS, Windows, Linux</span>
     <h1 class="headline">Notes that live<br>on the <span class="accent-text">edge</span> of your screen</h1>
     <p class="hero-sub">A floating, keyboard-first notes app. Press one shortcut to search, copy a link, or jump into a note — without ever reaching for the mouse.</p>
     <div class="hero-cta">
@@ -652,18 +665,24 @@
         <div class="os-sub">Apple Silicon &amp; Intel</div>
         <a class="dl" href="https://github.com/hypn05/NoteMinder/releases/latest" target="_blank" rel="noopener">Download .dmg</a>
         <div class="note">Or: <code>brew install hypn05/noteminder/noteminder</code></div>
+        <div class="update-tag"><span class="dot"></span>Update notifications (not signed by Apple yet)</div>
       </div>
       <div class="install-card">
         <div class="os">Windows</div>
         <div class="os-sub">x64 installer</div>
         <a class="dl" href="https://github.com/hypn05/NoteMinder/releases/latest" target="_blank" rel="noopener">Download .exe</a>
-        <div class="note">Run the installer, then launch from the Start Menu.</div>
+        <div class="note">Run the installer, then launch from the Start Menu. SmartScreen may warn once per version — click "More info → Run anyway".</div>
+        <div class="update-tag"><span class="dot"></span>Updates silently in the background</div>
       </div>
       <div class="install-card">
         <div class="os">Linux</div>
-        <div class="os-sub">AppImage</div>
-        <a class="dl" href="https://github.com/hypn05/NoteMinder/releases/latest" target="_blank" rel="noopener">Download .AppImage</a>
-        <div class="note"><code>chmod +x</code> it, then run directly.</div>
+        <div class="os-sub">AppImage, .deb, or .rpm</div>
+        <div class="dl-row">
+          <a class="dl" href="https://github.com/hypn05/NoteMinder/releases/latest" target="_blank" rel="noopener">.AppImage</a>
+          <a class="dl" href="https://github.com/hypn05/NoteMinder/releases/latest" target="_blank" rel="noopener">.deb / .rpm</a>
+        </div>
+        <div class="note"><code>chmod +x</code> the AppImage and run it, or <code>apt</code>/<code>dnf install</code> the package for your distro.</div>
+        <div class="update-tag"><span class="dot"></span>Updates silently (AppImage &amp; .deb)</div>
       </div>
     </div>
   </div>
