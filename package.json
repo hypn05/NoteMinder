@@ -1,6 +1,6 @@
 {
   "name": "noteminder",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "Desktop note-taking application with collapsible sidebar",
   "main": "main.js",
   "scripts": {
