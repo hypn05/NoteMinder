@@ -1223,6 +1223,29 @@ select.input {
   transform: scale(1.1);
 }
 
+.reminder-banner-snooze {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
+}
+
+.reminder-snooze-btn {
+  background: rgba(255, 255, 255, 0.15);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  color: white;
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.2s;
+}
+
+.reminder-snooze-btn:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
 /* Utility classes */
 .hidden {
   display: none !important;

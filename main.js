@@ -5,6 +5,7 @@ const ReminderManager = require('./utils/reminder');
 const AutoUpdater = require('./utils/autoUpdater');
 const SecurityManager = require('./utils/security');
 const { resolveBindings, toAccelerator } = require('./utils/keybindings');
+const { newId } = require('./utils/id');
 
 // Storage instances
 const notesStorage = new Storage('notes.json');
@@ -700,7 +701,7 @@ function captureClipboardClip() {
     return { success: true, clip: clips[0], duplicate: true };
   }
 
-  const clip = { id: Date.now().toString(), text, created: new Date().toISOString() };
+  const clip = { id: newId(), text, created: new Date().toISOString() };
   clips.unshift(clip);
   clipsStorage.write(clips);
 
@@ -1224,7 +1225,15 @@ ipcMain.on('quit-and-install', () => {
 });
 
 ipcMain.on('open-external-link', (event, url) => {
-  shell.openExternal(url);
+  // Any renderer can reach this handler, so only allow schemes a user would
+  // legitimately open in a browser/mail client. Without this check a crafted
+  // note link (file:, smb:, custom OS handlers) would be launched by the OS.
+  const value = String(url || '').trim();
+  if (!/^(https?:|mailto:)/i.test(value)) {
+    console.warn('[Security] Blocked open-external-link with disallowed scheme:', value.slice(0, 100));
+    return;
+  }
+  shell.openExternal(value);
 });
 
 ipcMain.handle('import-markdown', async () => {

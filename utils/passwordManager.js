@@ -1,5 +1,6 @@
 // Password Manager - Handles standalone password entities
 const { ipcRenderer } = require('electron');
+const { newId } = require('./id');
 
 class PasswordManager {
   constructor() {
@@ -53,7 +54,7 @@ class PasswordManager {
 
   async createPassword(passwordData) {
     const password = {
-      id: Date.now().toString(),
+      id: newId(),
       label: passwordData.label || 'Untitled',
       username: passwordData.username || '',
       password: passwordData.password || '',

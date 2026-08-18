@@ -25,6 +25,10 @@ class NoteCard {
     // Make card draggable
     card.draggable = true;
     card.dataset.noteId = this.note.id;
+
+    // Focusable so the sidebar is navigable by keyboard (arrow keys move
+    // between cards, Enter opens — handled by delegation in renderer.js).
+    card.tabIndex = 0;
     
     // Calculate text color if background is set
     let textColor = null;

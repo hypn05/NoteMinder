@@ -3,6 +3,9 @@ const PasswordManager = require('./utils/passwordManager');
 const ClipManager = require('./utils/clipManager');
 const { TEMPLATES } = require('./utils/noteTemplates');
 const { extractTags } = require('./utils/noteTags');
+const { fuzzyScore } = require('./utils/fuzzy');
+const { escapeHtml } = require('./utils/sanitize');
+const { copySecret } = require('./utils/secureClipboard');
 
 // State
 let notes = [];
@@ -19,10 +22,24 @@ const resultsContainer = document.getElementById('results-container');
 
 // Initialize
 async function init() {
+  await applyAppTheme();
   await loadNotes();
   await loadPasswords();
   await loadClips();
   setupEventListeners();
+}
+
+// The search window reuses the app theme (Dark/Light/Paper) instead of being
+// hardcoded dark — jarring when the rest of the app is in Light/Paper.
+async function applyAppTheme() {
+  try {
+    const settings = await ipcRenderer.invoke('get-settings');
+    const theme = (settings && settings.theme) || 'dark';
+    document.body.classList.toggle('light-theme', theme === 'light');
+    document.body.classList.toggle('paper-theme', theme === 'paper');
+  } catch (error) {
+    console.error('Failed to load theme for search window:', error);
+  }
 }
 
 async function loadNotes() {
@@ -57,7 +74,9 @@ function setupEventListeners() {
   ipcRenderer.on('focus-search', async () => {
     // The search window is created once and reused (shown/hidden), so
     // refresh data on every reopen or newly created notes/passwords/clips
-    // would stay invisible until the app was restarted.
+    // would stay invisible until the app was restarted. Theme too — it may
+    // have changed since the window was created.
+    await applyAppTheme();
     await loadNotes();
     await loadPasswords();
     await loadClips();
@@ -141,6 +160,34 @@ function handleSearch(e) {
     .map(link => ({ type: 'link', data: link, titleMatch: true }));
 
   filteredResults = [...matchedLinks, ...matchedNotes, ...matchedPasswords, ...matchedClips];
+
+  // Fuzzy fallback: when plain substring matching finds nothing, try
+  // subsequence matching ("wr" → "Weekly Review") before giving up.
+  if (filteredResults.length === 0) {
+    const fuzzyNotes = notes
+      .map(note => ({
+        type: 'note',
+        data: note,
+        titleMatch: true,
+        score: Math.max(
+          fuzzyScore(lowerQuery, note.title || ''),
+          fuzzyScore(lowerQuery, stripHtml(note.content)) * 0.5
+        )
+      }))
+      .filter(r => r.score > 0);
+
+    const fuzzyPasswords = passwords
+      .map(p => ({ type: 'password', data: p, titleMatch: true, score: fuzzyScore(lowerQuery, p.label || '') }))
+      .filter(r => r.score > 0);
+
+    const fuzzyClips = clips
+      .map(c => ({ type: 'clip', data: c, titleMatch: false, score: fuzzyScore(lowerQuery, c.text) }))
+      .filter(r => r.score > 0);
+
+    filteredResults = [...fuzzyNotes, ...fuzzyPasswords, ...fuzzyClips];
+    filteredResults.sort((a, b) => b.score - a.score);
+  }
+
   sortResults(filteredResults);
 
   selectedIndex = filteredResults.length > 0 ? 0 : -1;
@@ -152,6 +199,11 @@ function handleSearch(e) {
 // so they naturally fall after any matching pinned/favorite notes.
 function sortResults(results) {
   results.sort((a, b) => {
+    // Fuzzy-scored results rank purely by match quality.
+    if (a.score != null && b.score != null && a.score !== b.score) {
+      return b.score - a.score;
+    }
+
     const aPin = a.data.isPinned || false;
     const bPin = b.data.isPinned || false;
     if (aPin && !bPin) return -1;
@@ -305,13 +357,13 @@ function createLinkResultItem(link, query, isSelected, index) {
     item.classList.add('selected');
   }
 
-  const label = query ? highlightText(link.label, query) : link.label;
+  const label = highlightText(link.label, query);
 
   item.innerHTML = `
     <div class="result-icon">🔗</div>
     <div class="result-details">
       <div class="result-title">${label}</div>
-      <div class="result-subtitle">${link.url} — ${link.noteTitle}</div>
+      <div class="result-subtitle">${escapeHtml(link.url)} — ${escapeHtml(link.noteTitle)}</div>
     </div>
     <button class="copy-password-btn" title="Copy link">📋</button>
   `;
@@ -336,8 +388,8 @@ async function copyPassword(password) {
   try {
     const result = await passwordManager.getDecryptedPassword(password.id);
     if (result.success && result.data.password) {
-      await navigator.clipboard.writeText(result.data.password);
-      showToast('Password copied to clipboard');
+      await copySecret(result.data.password);
+      showToast('Password copied — clipboard clears in 30s');
       // Close window after a brief delay
       setTimeout(() => closeWindow(), 500);
     } else {
@@ -357,7 +409,8 @@ function createNoteResultItem(note, query, isSelected) {
   }
 
   const rawTitle = (note.title || '').trim() || 'Untitled';
-  const title = query ? highlightText(rawTitle, query) : rawTitle;
+  // highlightText escapes even without a query — never insert rawTitle raw.
+  const title = highlightText(rawTitle, query);
 
   let snippet = stripHtml(note.content).replace(/\s+/g, ' ').trim();
   if (snippet.length > 120) snippet = snippet.substring(0, 120) + '…';
@@ -399,21 +452,16 @@ function createPasswordResultItem(password, query, isSelected) {
     item.classList.add('selected');
   }
   
-  // Get label
-  let label = password.label || 'Untitled Password';
-  
-  // Highlight search query in label
-  if (query) {
-    label = highlightText(label, query);
-  }
-  
+  // Get label (highlightText escapes even without a query)
+  const label = highlightText(password.label || 'Untitled Password', query);
+
   // Build icon
   const icon = password.isFavorite ? '⭐' : '🔐';
-  
-  // Subtitle - show username if available
+
+  // Subtitle - show username if available (escaped — user-controlled text)
   let subtitle = '';
   if (password.username) {
-    subtitle = `<div class="result-subtitle">${password.username}</div>`;
+    subtitle = `<div class="result-subtitle">${escapeHtml(password.username)}</div>`;
   }
   
   item.innerHTML = `
@@ -612,11 +660,17 @@ function extractLinksFromNote(note) {
   return links;
 }
 
+// SECURITY: everything returned here is injected via innerHTML, and note
+// titles/snippets/usernames are attacker-controlled strings (an imported or
+// pasted note can contain literal markup). Escape first, then highlight the
+// escaped query — never insert raw text.
 function highlightText(text, query) {
-  if (!query) return text;
-  
-  const regex = new RegExp(`(${escapeRegex(query)})`, 'gi');
-  return text.replace(regex, '<span class="highlight">$1</span>');
+  const safeText = escapeHtml(text);
+  if (!query) return safeText;
+
+  const safeQuery = escapeHtml(query);
+  const regex = new RegExp(`(${escapeRegex(safeQuery)})`, 'gi');
+  return safeText.replace(regex, '<span class="highlight">$1</span>');
 }
 
 function escapeRegex(string) {

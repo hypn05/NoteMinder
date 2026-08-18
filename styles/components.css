@@ -280,6 +280,12 @@
   transition: all var(--transition-fast), border-color 0.1s;
 }
 
+/* Keyboard navigation in the sidebar (arrow keys + Enter, see renderer.js) */
+.note-card:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: -2px;
+}
+
 .note-card:active {
   cursor: grabbing;
 }

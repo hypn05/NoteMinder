@@ -23,7 +23,6 @@ class ReminderManager {
   }
 
   checkReminders() {
-    console.log('[ReminderManager] Checking reminders at:', new Date().toLocaleString());
     if (this.notificationCallback) {
       this.notificationCallback();
     }
@@ -31,28 +30,25 @@ class ReminderManager {
 
   getNextReminderTime(reminder) {
     if (!reminder || !reminder.enabled) {
-      console.log('[getNextReminderTime] Reminder is null or disabled');
       return null;
     }
 
+    // Snoozed reminders report the snooze target as their next time.
+    if (reminder.snoozeUntil) {
+      const snoozeTime = new Date(reminder.snoozeUntil);
+      if (snoozeTime > new Date()) {
+        return snoozeTime;
+      }
+    }
+
     const now = new Date();
-    console.log('[getNextReminderTime] Current time:', now.toISOString());
-    console.log('[getNextReminderTime] Reminder type:', reminder.type);
-    console.log('[getNextReminderTime] Reminder time:', reminder.time);
-    
     const [hours, minutes] = reminder.time.split(':').map(Number);
 
     if (reminder.type === 'once') {
-      console.log('[getNextReminderTime] Reminder date:', reminder.date);
-      
       // Parse the date string properly to avoid timezone issues
       const [year, month, day] = reminder.date.split('-').map(Number);
       const reminderDate = new Date(year, month - 1, day, hours, minutes, 0, 0);
-      
-      console.log('[getNextReminderTime] Calculated reminder datetime:', reminderDate.toISOString());
-      console.log('[getNextReminderTime] Calculated reminder datetime (local):', reminderDate.toLocaleString());
-      console.log('[getNextReminderTime] Is future?', reminderDate >= now);
-      
+
       // Allow reminders set for current time or future
       return reminderDate >= now ? reminderDate : null;
     }
@@ -95,13 +91,9 @@ class ReminderManager {
   }
 
   formatReminderDisplay(reminder) {
-    console.log('[formatReminderDisplay] Input reminder:', JSON.stringify(reminder, null, 2));
-    
     const nextTime = this.getNextReminderTime(reminder);
-    console.log('[formatReminderDisplay] Next time calculated:', nextTime ? nextTime.toISOString() : 'null');
-    
+
     if (!nextTime) {
-      console.log('[formatReminderDisplay] Returning null - no next time');
       return 'No upcoming time';
     }
 
@@ -126,8 +118,7 @@ class ReminderManager {
     } else {
       result = nextTime.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ` at ${timeStr}`;
     }
-    
-    console.log('[formatReminderDisplay] Returning:', result);
+
     return result;
   }
 
@@ -137,28 +128,31 @@ class ReminderManager {
     }
 
     const now = new Date();
+
+    // Snooze overrides the normal schedule: due exactly once when the snooze
+    // target passes, regardless of the reminder's type/recurrence.
+    if (reminder.snoozeUntil) {
+      const snoozeTime = new Date(reminder.snoozeUntil);
+      if (now < snoozeTime) {
+        return false;
+      }
+      const lastTriggered = reminder.lastTriggered ? new Date(reminder.lastTriggered) : null;
+      return !lastTriggered || lastTriggered < snoozeTime;
+    }
+
     const [hours, minutes] = reminder.time.split(':').map(Number);
 
     if (reminder.type === 'once') {
       // Parse the date string properly to avoid timezone issues
       const [year, month, day] = reminder.date.split('-').map(Number);
       const reminderDate = new Date(year, month - 1, day, hours, minutes, 0, 0);
-      
-      console.log('[isDue] Checking once reminder:');
-      console.log('  Current time:', now.toISOString(), '(', now.toLocaleString(), ')');
-      console.log('  Reminder time:', reminderDate.toISOString(), '(', reminderDate.toLocaleString(), ')');
-      console.log('  Time difference (seconds):', (reminderDate - now) / 1000);
-      
+
       // Check if reminder time has passed and hasn't been triggered yet
       // Use a 2-minute window to account for check intervals
       const twoMinutesAgo = new Date(now.getTime() - 120000);
       const isPast = reminderDate <= now;
       const isWithinWindow = reminderDate > twoMinutesAgo;
-      
-      console.log('  Is past or current?', isPast);
-      console.log('  Is within 2-min window?', isWithinWindow);
-      console.log('  Result (isDue):', isPast && isWithinWindow);
-      
+
       return isPast && isWithinWindow;
     }
 

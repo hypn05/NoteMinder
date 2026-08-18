@@ -1,6 +1,7 @@
 // PasswordModal component for creating/editing password entries
 const { ipcRenderer } = require('electron');
 const Modal = require('./modal');
+const { copySecret } = require('../utils/secureClipboard');
 
 class PasswordModal {
   constructor() {
@@ -278,8 +279,10 @@ class PasswordModal {
 
   async copyToClipboard(text, label) {
     try {
-      await navigator.clipboard.writeText(text);
-      this.showNotification(`${label} copied to clipboard`, 'success');
+      // Secrets auto-clear from the OS clipboard after a timeout instead of
+      // lingering there forever (see utils/secureClipboard).
+      await copySecret(text);
+      this.showNotification(`${label} copied — clipboard clears in 30s`, 'success');
     } catch (err) {
       console.error('Failed to copy:', err);
       this.showNotification('Failed to copy to clipboard', 'error');

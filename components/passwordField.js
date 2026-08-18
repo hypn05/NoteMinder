@@ -1,12 +1,14 @@
 // Password field component for storing credentials with encryption
 const { ipcRenderer } = require('electron');
+const { copySecret } = require('../utils/secureClipboard');
+const { newId } = require('../utils/id');
 
 // Global store for password field instances
 const passwordFieldInstances = new Map();
 
 class PasswordField {
   constructor(data = {}) {
-    this.id = data.id || Date.now().toString();
+    this.id = data.id || newId();
     this.label = data.label || '';
     this.username = data.username || '';
     this.password = data.password || '';
@@ -152,7 +154,8 @@ class PasswordField {
         
         if (textToCopy) {
           try {
-            await navigator.clipboard.writeText(textToCopy);
+            // Auto-clears the OS clipboard after a timeout (utils/secureClipboard).
+            await copySecret(textToCopy);
             
             // Visual feedback
             const originalText = btn.textContent;

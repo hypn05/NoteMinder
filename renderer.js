@@ -11,6 +11,9 @@ const ClipManager = require('./utils/clipManager');
 const ReminderManager = require('./utils/reminder');
 const keybindings = require('./utils/keybindingsStore');
 const { extractTags } = require('./utils/noteTags');
+const { newId } = require('./utils/id');
+const { copySecret } = require('./utils/secureClipboard');
+const { escapeHtml, sanitizeUrl } = require('./utils/sanitize');
 
 // State
 let notes = [];
@@ -86,7 +89,6 @@ async function init() {
   // Initialize reminder manager with callback
   reminderManager = new ReminderManager(checkReminders);
   reminderManager.start();
-  console.log('[Init] ReminderManager initialized and started');
   
   // Check notification permissions
   checkNotificationPermissions();
@@ -122,6 +124,40 @@ function setupEventListeners() {
 
   // Search
   searchInput.addEventListener('input', handleSearch);
+  searchInput.addEventListener('keydown', (e) => {
+    // Down arrow from the search box jumps into the notes list.
+    if (e.key === 'ArrowDown') {
+      const firstCard = notesContainer.querySelector('.note-card');
+      if (firstCard) {
+        e.preventDefault();
+        firstCard.focus();
+      }
+    }
+  });
+
+  // Keyboard navigation for the notes list: ↑/↓ move between cards, Enter
+  // opens the focused note. The cards themselves are focusable (tabIndex in
+  // NoteCard.render), and the list re-renders often, so delegate at the
+  // container instead of binding per-card.
+  notesContainer.addEventListener('keydown', (e) => {
+    const card = e.target.closest('.note-card');
+    if (!card) return;
+
+    const cards = Array.from(notesContainer.querySelectorAll('.note-card'));
+    const index = cards.indexOf(card);
+
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      const next = e.key === 'ArrowDown'
+        ? cards[Math.min(index + 1, cards.length - 1)]
+        : cards[Math.max(index - 1, 0)];
+      if (next) next.focus();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const note = notes.find(n => n.id === card.dataset.noteId);
+      if (note) openNote(note);
+    }
+  });
 
   // New note button
   newNoteBtn.addEventListener('click', createNewNote);
@@ -408,8 +444,6 @@ function ensureArrowTabVisible() {
     if (arrowIcon) {
       arrowIcon.style.display = 'block';
     }
-    
-    console.log('Arrow tab visibility ensured');
   }
 }
 
@@ -691,6 +725,7 @@ function renderPasswords() {
       onClick: openPassword,
       onDelete: deletePassword,
       onToggleFavorite: togglePasswordFavorite,
+      onCopyPassword: copyPasswordSecurely,
       isActive: currentPassword && currentPassword.id === password.id
     });
     passwordsContainer.appendChild(passwordCard.render());
@@ -727,6 +762,25 @@ async function togglePasswordFavorite(password) {
   password.isFavorite = !password.isFavorite;
   await passwordManager.updatePassword(password);
   await loadPasswords();
+}
+
+// Copies a password entry's secret to the OS clipboard and schedules an
+// automatic clipboard clear (see utils/secureClipboard). Wired to the
+// PasswordCard 📋 button — which previously had no callback and silently
+// did nothing.
+async function copyPasswordSecurely(password) {
+  try {
+    const result = await passwordManager.getDecryptedPassword(password.id);
+    if (result.success && result.data.password) {
+      await copySecret(result.data.password);
+      showMessage('Password copied — clipboard clears in 30s', 'success');
+    } else {
+      showMessage('Failed to decrypt password', 'error');
+    }
+  } catch (error) {
+    console.error('Failed to copy password:', error);
+    showMessage('Failed to copy password', 'error');
+  }
 }
 
 async function loadClips() {
@@ -951,7 +1005,7 @@ function reorderNotes(draggedNoteId, targetNoteId, insertBefore) {
 
 function createNewNote() {
   const note = {
-    id: Date.now().toString(),
+    id: newId(),
     title: '',
     content: '',
     backgroundColor: null,
@@ -981,7 +1035,7 @@ function createNewNoteFromTemplate(templateId) {
   if (!template) return;
 
   const note = {
-    id: Date.now().toString(),
+    id: newId(),
     title: template.title(),
     content: template.content(),
     backgroundColor: null,
@@ -1559,7 +1613,7 @@ function setupNoteLinking() {
     if (!linkQuery) return;
     if (entry.__createNew) {
       const newNote = {
-        id: Date.now().toString(),
+        id: newId(),
         title: entry.title,
         content: '',
         backgroundColor: null,
@@ -1804,8 +1858,7 @@ function setupAllDropdowns() {
       item.addEventListener('mousedown', (e) => {
         e.preventDefault(); // Prevent losing focus
         e.stopPropagation();
-        console.log('Dropdown item clicked:', label);
-        
+
         // Restore the saved selection before executing action
         if (savedSelection) {
           const selection = window.getSelection();
@@ -1830,13 +1883,11 @@ function setupAllDropdowns() {
     button.addEventListener('mousedown', (e) => {
       e.preventDefault(); // Prevent losing focus
       e.stopPropagation();
-      console.log('Dropdown button clicked:', buttonId);
-      
+
       // Save current selection
       const selection = window.getSelection();
       if (selection.rangeCount > 0) {
         savedSelection = selection.getRangeAt(0).cloneRange();
-        console.log('Selection saved:', savedSelection.toString());
       }
       
       // Close all other dropdowns
@@ -1848,7 +1899,6 @@ function setupAllDropdowns() {
       
       // Toggle this dropdown
       dropdown.classList.toggle('hidden');
-      console.log('Dropdown hidden state:', dropdown.classList.contains('hidden'));
     });
   });
   
@@ -2402,50 +2452,16 @@ function showReminderModal(note) {
       reminder.dayOfWeek = parseInt(form.querySelector('#reminder-day').value);
     }
     
-    console.log('\n=== CREATING NEW REMINDER ===');
-    console.log('Current time:', new Date().toISOString());
-    console.log('Current time local:', new Date().toLocaleString());
-    console.log('Note ID:', note.id);
-    console.log('Reminder details:');
-    console.log('  Type:', reminder.type);
-    console.log('  Time:', reminder.time);
-    console.log('  Date:', reminder.date || 'N/A');
-    console.log('  Day of Week:', reminder.dayOfWeek !== undefined ? reminder.dayOfWeek : 'N/A');
-    console.log('  Message:', reminder.message || '(none)');
-    console.log('  Enabled:', reminder.enabled);
-    
     if (!note.reminders) {
       note.reminders = [];
-      console.log('Initialized empty reminders array for note');
     }
-    
+
     note.reminders.push(reminder);
-    console.log('Reminder added to note. Total reminders for this note:', note.reminders.length);
-    
     saveNotes();
-    console.log('Notes saved to storage');
-    
     renderNotes();
-    console.log('UI updated');
-    
     modal.close();
-    
-    // Show confirmation with exact time
-    console.log('About to call getNextReminderTime with reminder:', reminder);
-    console.log('reminderManager exists?', !!reminderManager);
-    console.log('reminderManager type:', typeof reminderManager);
-    
-    const nextTime = reminderManager.getNextReminderTime(reminder);
-    console.log('getNextReminderTime returned:', nextTime);
-    
+
     const displayText = reminderManager.formatReminderDisplay(reminder);
-    console.log('formatReminderDisplay returned:', displayText);
-    
-    console.log('Next trigger time calculated:', nextTime ? nextTime.toISOString() : 'null');
-    console.log('Next trigger time local:', nextTime ? nextTime.toLocaleString() : 'null');
-    console.log('Display text:', displayText);
-    console.log('=== REMINDER CREATED SUCCESSFULLY ===\n');
-    
     showMessage(`Reminder set for ${displayText}`, 'success');
   };
   
@@ -2476,144 +2492,146 @@ async function importMarkdown() {
 }
 
 function markdownToHtml(markdown) {
-  let html = markdown;
-  
+  // SECURITY: escape the raw input first. The previous version interpolated
+  // the file straight into innerHTML, so an imported .md containing markup
+  // (<img onerror>, <script>) executed with full Node access (this window
+  // runs with nodeIntegration). Escaping first means only the tags generated
+  // by the transforms below can ever appear in the output.
+  let html = escapeHtml(markdown);
+
   // Headers
   html = html.replace(/^### (.*$)/gim, '<h3>$1</h3>');
   html = html.replace(/^## (.*$)/gim, '<h2>$1</h2>');
   html = html.replace(/^# (.*$)/gim, '<h1>$1</h1>');
-  
+
   // Bold
   html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-  
+
   // Italic
   html = html.replace(/\*(.*?)\*/g, '<em>$1</em>');
-  
+
   // Code
   html = html.replace(/`(.*?)`/g, '<code>$1</code>');
-  
-  // Links
-  html = html.replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2">$1</a>');
-  
+
+  // Links — validate the scheme so [x](javascript:…) can't smuggle script
+  // in through the href. The label is already escaped text from above.
+  html = html.replace(/\[(.*?)\]\((.*?)\)/g, (match, label, url) => {
+    const safeUrl = sanitizeUrl(url);
+    if (!safeUrl) return label;
+    return `<a href="${safeUrl}">${label}</a>`;
+  });
+
   // Line breaks
   html = html.replace(/\n/g, '<br>');
-  
+
   return html;
 }
 
-function showReminderBanner(message, noteId) {
+function showReminderBanner(message, noteId, reminder) {
   const banner = document.getElementById('reminder-banner');
   const messageEl = banner.querySelector('.reminder-banner-message');
   const closeBtn = banner.querySelector('.reminder-banner-close');
-  
+
   messageEl.textContent = message;
   banner.classList.remove('hidden');
-  
+
+  const hide = () => banner.classList.add('hidden');
+
   // Auto-hide after 10 seconds
-  const autoHideTimeout = setTimeout(() => {
-    banner.classList.add('hidden');
-  }, 10000);
-  
+  const autoHideTimeout = setTimeout(hide, 10000);
+
   // Close button handler
   const closeHandler = () => {
     clearTimeout(autoHideTimeout);
-    banner.classList.add('hidden');
+    hide();
     closeBtn.removeEventListener('click', closeHandler);
   };
-  
+
   closeBtn.addEventListener('click', closeHandler);
-  
+
+  // Snooze buttons — push the reminder out by N minutes. This re-fires the
+  // banner + notification when the snooze elapses (see ReminderManager.isDue).
+  banner.querySelectorAll('.reminder-snooze-btn').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const minutes = Number(btn.dataset.snoozeMinutes) || 10;
+      snoozeReminder(noteId, reminder, minutes);
+      clearTimeout(autoHideTimeout);
+      hide();
+    }, { once: true });
+  });
+
   // Click banner to open note
   const bannerClickHandler = (e) => {
-    if (e.target !== closeBtn && !closeBtn.contains(e.target)) {
-      const note = notes.find(n => n.id === noteId);
-      if (note) {
-        if (isCollapsed) {
-          toggleSidebar();
-        }
-        openNote(note);
-        banner.classList.add('hidden');
-        clearTimeout(autoHideTimeout);
+    if (e.target.closest('.reminder-banner-close, .reminder-snooze-btn')) return;
+    const note = notes.find(n => n.id === noteId);
+    if (note) {
+      if (isCollapsed) {
+        toggleSidebar();
       }
+      openNote(note);
+      hide();
+      clearTimeout(autoHideTimeout);
     }
   };
-  
+
   banner.addEventListener('click', bannerClickHandler, { once: true });
 }
 
+// Moves the reminder's next firing to now + `minutes` by setting a
+// snoozeUntil timestamp. The reminder keeps its original schedule — snooze
+// is a one-shot override evaluated first by ReminderManager.isDue.
+function snoozeReminder(noteId, reminder, minutes) {
+  if (!reminder) return;
+  const note = notes.find(n => n.id === noteId);
+  if (!note) return;
+
+  reminder.snoozeUntil = new Date(Date.now() + minutes * 60 * 1000).toISOString();
+  saveNotes();
+  renderNotes();
+  showMessage(`Snoozed for ${minutes} minute${minutes === 1 ? '' : 's'}`, 'success');
+}
+
 function checkReminders() {
-  console.log('=== CHECKING REMINDERS (renderer.js) ===');
-  console.log('Current time:', new Date().toISOString());
-  console.log('Current time local:', new Date().toLocaleString());
-  console.log('Total notes:', notes.length);
-  
-  let totalReminders = 0;
-  let enabledReminders = 0;
   let dueReminders = 0;
-  
-  notes.forEach((note, noteIndex) => {
-    console.log(`\nNote ${noteIndex + 1} (ID: ${note.id}):`);
-    
+
+  notes.forEach((note) => {
     if (!note.reminders || note.reminders.length === 0) {
-      console.log('  No reminders');
       return;
     }
-    
-    console.log(`  Has ${note.reminders.length} reminder(s)`);
-    
-    note.reminders.forEach((reminder, index) => {
-      totalReminders++;
-      console.log(`\n  Reminder ${index + 1}:`);
-      console.log('    Type:', reminder.type);
-      console.log('    Time:', reminder.time);
-      console.log('    Enabled:', reminder.enabled);
-      console.log('    Date:', reminder.date || 'N/A');
-      console.log('    Day of Week:', reminder.dayOfWeek !== undefined ? reminder.dayOfWeek : 'N/A');
-      console.log('    Message:', reminder.message || 'N/A');
-      console.log('    Last Triggered:', reminder.lastTriggered || 'Never');
-      
+
+    note.reminders.forEach((reminder) => {
       if (!reminder.enabled) {
-        console.log('    ⊗ SKIPPED - Reminder is disabled');
         return;
       }
-      
-      enabledReminders++;
-      
-      const isDue = reminderManager.isDue(reminder);
-      console.log('    Is due:', isDue);
-      
-      if (isDue) {
+
+      if (reminderManager.isDue(reminder)) {
         dueReminders++;
-        console.log('    ✓ REMINDER IS DUE - Showing banner and sending notification');
-        
         const message = reminder.message || 'Reminder for your note';
-        
-        // Show in-app banner
-        showReminderBanner(message, note.id);
-        
+
+        // Show in-app banner (with snooze actions)
+        showReminderBanner(message, note.id, reminder);
+
         // Also send system notification
         ipcRenderer.send('show-notification', {
           title: 'NoteMinder Reminder',
           body: message,
           noteId: note.id
         });
-        
-        // Update last triggered
+
+        // Update last triggered; a consumed snooze is cleared so the
+        // underlying schedule takes over again.
         reminder.lastTriggered = new Date().toISOString();
-        console.log('    Updated lastTriggered:', reminder.lastTriggered);
-        
-        // Disable one-time reminders
+        delete reminder.snoozeUntil;
+
+        // Disable one-time reminders once fired (including via snooze).
         if (reminder.type === 'once') {
           reminder.enabled = false;
-          console.log('    Disabled one-time reminder');
         }
       }
     });
   });
-  
-  console.log(`\nSummary: ${dueReminders} due out of ${enabledReminders} enabled (${totalReminders} total)`);
-  console.log('=== END CHECKING REMINDERS ===\n');
-  
+
   if (dueReminders > 0) {
     saveNotes();
     renderNotes();
