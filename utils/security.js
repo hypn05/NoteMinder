@@ -175,10 +175,12 @@ class SecurityManager {
     }
 
     let password = '';
-    const randomBytes = crypto.randomBytes(length);
-    
+    // crypto.randomInt is unbiased — the previous `randomBytes[i] %
+    // charset.length` had modulo bias (256 is not a multiple of most charset
+    // lengths, so early characters in the charset were slightly more likely).
+    // Flagged by CodeQL js/biased-cryptographic-random.
     for (let i = 0; i < length; i++) {
-      password += charset[randomBytes[i] % charset.length];
+      password += charset[crypto.randomInt(0, charset.length)];
     }
 
     return password;
